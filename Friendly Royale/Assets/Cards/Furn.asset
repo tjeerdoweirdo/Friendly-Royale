@@ -1,0 +1,39 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b9d19ae5cecd7d946a078ba5b511f098, type: 3}
+  m_Name: Furn
+  m_EditorClassIdentifier: 
+  cardID: Furnace
+  cardName: Furnace
+  icon: {fileID: 21300000, guid: 6c2013701f48bfe4f9839bbec98db83e, type: 3}
+  cardType: 1
+  rarity: 3
+  unlockArenaID: Tutorial
+  unitPrefab: {fileID: 3213480019466655473, guid: aea60f3e24e1e1042b6a989dbefaaab4, type: 3}
+  coinCost: 7
+  baseHealth: 50
+  baseDamage: 10
+  baseSpeed: 3
+  baseRange: 1.2
+  baseAttackCooldown: 1
+  maxLevel: 10
+  description: The Furnace spawn bombs that can stop pushes
+  buildingType: 1
+  buildingLifetime: 20
+  buildingHpDecayPerSecond: 1
+  spawnUnitPrefab: {fileID: 3177070640604953242, guid: 54bdb768e481c70498867d973f93d502, type: 3}
+  spawnInterval: 4
+  maxActive: 1
+  maxTotalSpawns: 6
+  defenseAttackRange: 6
+  defenseAttackDamage: 12
+  defenseAttackCooldown: 1

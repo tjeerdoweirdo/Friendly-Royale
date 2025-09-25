@@ -1,0 +1,46 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b9d19ae5cecd7d946a078ba5b511f098, type: 3}
+  m_Name: Smartman
+  m_EditorClassIdentifier: 
+  cardID: Smartman
+  cardName: Smartman
+  icon: {fileID: 21300000, guid: 1777abfa88254d947a9f1c7acea82815, type: 3}
+  cardType: 0
+  rarity: 3
+  unlockArenaID: Tutorial
+  unitPrefab: {fileID: 2847029890258799918, guid: 1095d370932181b40a8fea42e61c334f, type: 3}
+  coinCost: 5
+  baseHealth: 75
+  baseDamage: 15
+  baseSpeed: 6
+  baseRange: 2
+  baseAttackCooldown: 1
+  maxLevel: 10
+  description: The smart man has the inteligence to help friendly units with speed
+  unitRole: 1
+  effectStat: 2
+  effectAmount: 1.5
+  effectDuration: 2
+  effectMode: 1
+  auraRadius: 8
+  auraInterval: 1
+  buildingType: 0
+  buildingLifetime: 30
+  buildingHpDecayPerSecond: 0
+  spawnUnitPrefab: {fileID: 0}
+  spawnInterval: 2.5
+  maxActive: 3
+  maxTotalSpawns: 6
+  defenseAttackRange: 6
+  defenseAttackDamage: 12
+  defenseAttackCooldown: 1

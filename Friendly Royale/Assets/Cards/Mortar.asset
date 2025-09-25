@@ -1,0 +1,42 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b9d19ae5cecd7d946a078ba5b511f098, type: 3}
+  m_Name: Mortar
+  m_EditorClassIdentifier: 
+  cardID: Mortar
+  cardName: Mortar
+  icon: {fileID: 21300000, guid: 8b2c13bd036dd384398fcda29e29acd5, type: 3}
+  cardType: 1
+  rarity: 2
+  unlockArenaID: Tutorial
+  unitPrefab: {fileID: 7509619319991560720, guid: e6c49c94e6d972d45a828a41e75a50cd, type: 3}
+  coinCost: 4
+  baseHealth: 20
+  baseDamage: 10
+  baseSpeed: 3
+  baseRange: 30
+  baseAttackCooldown: 1
+  maxLevel: 10
+  description: 'The mortar is a nice defensive building that can chip down on far
+    away enemies
+
+'
+  buildingType: 2
+  buildingLifetime: 30
+  buildingHpDecayPerSecond: 1
+  spawnUnitPrefab: {fileID: 0}
+  spawnInterval: 2.5
+  maxActive: 3
+  maxTotalSpawns: 6
+  defenseAttackRange: 30
+  defenseAttackDamage: 25
+  defenseAttackCooldown: 5

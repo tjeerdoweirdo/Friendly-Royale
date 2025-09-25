@@ -1,0 +1,40 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b9d19ae5cecd7d946a078ba5b511f098, type: 3}
+  m_Name: Canon
+  m_EditorClassIdentifier: 
+  cardID: Canon
+  cardName: Canon
+  icon: {fileID: 21300000, guid: ae2a9cd73f514954dabed050fff3275c, type: 3}
+  cardType: 0
+  rarity: 3
+  unlockArenaID: Tutorial
+  unitPrefab: {fileID: 6699622725746716999, guid: 0cadfc40d7757f14b8215ab0f4bac8d4, type: 3}
+  coinCost: 8
+  baseHealth: 150
+  baseDamage: 25
+  baseSpeed: 2
+  baseRange: 7
+  baseAttackCooldown: 2
+  maxLevel: 10
+  description: The canon is the center of your push ones placed although slow can
+    pack a punch
+  buildingType: 0
+  buildingLifetime: 30
+  buildingHpDecayPerSecond: 0
+  spawnUnitPrefab: {fileID: 0}
+  spawnInterval: 2.5
+  maxActive: 3
+  maxTotalSpawns: 6
+  defenseAttackRange: 6
+  defenseAttackDamage: 12
+  defenseAttackCooldown: 1

@@ -1,0 +1,46 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b9d19ae5cecd7d946a078ba5b511f098, type: 3}
+  m_Name: GIGAKNIGHT
+  m_EditorClassIdentifier: 
+  cardID: Giga-Knight
+  cardName: Giga-Knight
+  icon: {fileID: 21300000, guid: 394e93ce356b57344903a08ff72fcab2, type: 3}
+  cardType: 0
+  rarity: 3
+  unlockArenaID: Tutorial
+  unitPrefab: {fileID: 5746635003594701443, guid: a1ddbde958071f8418e52566903bec45, type: 3}
+  coinCost: 9
+  baseHealth: 250
+  baseDamage: 15
+  baseSpeed: 2
+  baseRange: 6
+  baseAttackCooldown: 2
+  maxLevel: 10
+  description: ITS BLACK ITS BIG AND ITS GONNA DESTROY YOU
+  unitRole: 0
+  effectStat: 0
+  effectAmount: 0
+  effectDuration: 3
+  effectMode: 0
+  auraRadius: 3
+  auraInterval: 1
+  buildingType: 0
+  buildingLifetime: 30
+  buildingHpDecayPerSecond: 0
+  spawnUnitPrefab: {fileID: 0}
+  spawnInterval: 2.5
+  maxActive: 3
+  maxTotalSpawns: 6
+  defenseAttackRange: 6
+  defenseAttackDamage: 12
+  defenseAttackCooldown: 1

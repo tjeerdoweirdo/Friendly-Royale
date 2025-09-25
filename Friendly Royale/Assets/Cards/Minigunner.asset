@@ -1,0 +1,41 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b9d19ae5cecd7d946a078ba5b511f098, type: 3}
+  m_Name: Minigunner
+  m_EditorClassIdentifier: 
+  cardID: Minigunner
+  cardName: Minigunner
+  icon: {fileID: 21300000, guid: 782e3635353fcb640bf91cc37082ca2b, type: 3}
+  cardType: 0
+  rarity: 2
+  unlockArenaID: Tutorial
+  unitPrefab: {fileID: 8997525709764943298, guid: 829e27cdcda9b434fa6e43fc9e9309a2, type: 3}
+  coinCost: 6
+  baseHealth: 100
+  baseDamage: 7
+  baseSpeed: 2
+  baseRange: 6
+  baseAttackCooldown: 0.5
+  maxLevel: 10
+  description: 'A tank that shoots fast but doesnt have too much range
+
+'
+  buildingType: 0
+  buildingLifetime: 30
+  buildingHpDecayPerSecond: 0
+  spawnUnitPrefab: {fileID: 0}
+  spawnInterval: 2.5
+  maxActive: 3
+  maxTotalSpawns: 6
+  defenseAttackRange: 6
+  defenseAttackDamage: 12
+  defenseAttackCooldown: 1
