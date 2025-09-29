@@ -32,6 +32,15 @@ public class CoinSystem : MonoBehaviour
 
     void Start()
     {
+        // Try to auto-assign UI references if missing (for new matches)
+        if (coinSlider == null)
+        {
+            coinSlider = FindObjectOfType<Slider>();
+        }
+        if (coinText == null)
+        {
+            coinText = FindObjectOfType<TMP_Text>();
+        }
         currentCoins = startCoins;
         timer = 0f;
         UpdateUI();

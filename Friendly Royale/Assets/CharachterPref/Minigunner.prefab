@@ -174,7 +174,6 @@ GameObject:
   - component: {fileID: 4666205149278332719}
   - component: {fileID: 2533406244151203990}
   - component: {fileID: 4281095680195130763}
-  - component: {fileID: 5892823692183893601}
   m_Layer: 0
   m_Name: Minigunner
   m_TagString: Untagged
@@ -335,14 +334,29 @@ MonoBehaviour:
   projectilePrefab: {fileID: 0}
   firePoint: {fileID: 0}
   projectileSpeed: 10
+  isSplash: 0
+  splashRadius: 2.5
+  leftPath:
+  - {fileID: 0}
+  - {fileID: 0}
+  - {fileID: 0}
+  rightPath:
+  - {fileID: 0}
+  - {fileID: 0}
+  - {fileID: 0}
   path:
   - {fileID: 0}
   - {fileID: 0}
   - {fileID: 0}
+  pathSwitchCheckInterval: 2
+  pathLookaheadDistance: 5
+  enemyDetectionRadius: 4
+  maxEnemiesBeforeSwitch: 2
   endTargetTower: {fileID: 0}
-  agent: {fileID: 5892823692183893601}
+  agent: {fileID: 0}
   addAgentIfMissing: 1
   overrideAgentSettings: 1
+  agentTypeID: 0
   detectionRange: 30
   viewAngle: 200
   eyeHeight: 0.9
@@ -359,28 +373,6 @@ MonoBehaviour:
   movementPlayThreshold: 0.2
   health: {fileID: 0}
   retargetInterval: 3
---- !u!195 &5892823692183893601
-NavMeshAgent:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8997525709764943298}
-  m_Enabled: 1
-  m_AgentTypeID: 0
-  m_Radius: 0.5
-  m_Speed: 3.5
-  m_Acceleration: 8
-  avoidancePriority: 50
-  m_AngularSpeed: 120
-  m_StoppingDistance: 0
-  m_AutoTraverseOffMeshLink: 1
-  m_AutoBraking: 1
-  m_AutoRepath: 1
-  m_Height: 2
-  m_BaseOffset: 1
-  m_WalkableMask: 4294967295
-  m_ObstacleAvoidanceType: 4
 --- !u!1001 &1882457919820081550
 PrefabInstance:
   m_ObjectHideFlags: 0

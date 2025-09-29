@@ -10,26 +10,26 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: b9d19ae5cecd7d946a078ba5b511f098, type: 3}
-  m_Name: GIGAKNIGHT
+  m_Name: Assault
   m_EditorClassIdentifier: 
-  cardID: Giga-Knight
-  cardName: Giga-Knight
-  icon: {fileID: 21300000, guid: 55a318fe362d46243901d72016b84811, type: 3}
+  cardID: Assault
+  cardName: Assault
+  icon: {fileID: 21300000, guid: 394e93ce356b57344903a08ff72fcab2, type: 3}
   cardType: 0
-  rarity: 3
+  rarity: 0
   unlockArenaID: Tutorial
-  unitPrefab: {fileID: 5746635003594701443, guid: a1ddbde958071f8418e52566903bec45, type: 3}
+  unitPrefab: {fileID: 3445795910163226400, guid: e13741ba5d4d96544ba2769238262542, type: 3}
   spellAsset: {fileID: 0}
   spellLevel: 1
   spellMaxLevel: 5
-  coinCost: 9
-  baseHealth: 250
-  baseDamage: 15
-  baseSpeed: 2
-  baseRange: 6
-  baseAttackCooldown: 2
+  coinCost: 4
+  baseHealth: 75
+  baseDamage: 10
+  baseSpeed: 4
+  baseRange: 8
+  baseAttackCooldown: 0.5
   maxLevel: 10
-  description: ITS BLACK ITS BIG AND ITS GONNA DESTROY YOU
+  description: 
   unitRole: 0
   effectStat: 0
   effectAmount: 0

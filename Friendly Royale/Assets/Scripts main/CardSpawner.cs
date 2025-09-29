@@ -293,17 +293,14 @@ public class CardSpawner : MonoBehaviour
         // Decide lane by worldPos.x (you used this pattern before)
         bool left = worldPos.x < 0f;
         Transform spawnPoint = null;
-        Transform[] path = null;
 
         if (faction == Unit.Faction.Player)
         {
             spawnPoint = left ? leftLaneSpawnPlayer : rightLaneSpawnPlayer;
-            path = left ? leftPathPlayer : rightPathPlayer;
         }
         else
         {
             spawnPoint = left ? leftLaneSpawnEnemy : rightLaneSpawnEnemy;
-            path = left ? leftPathEnemy : rightPathEnemy;
         }
 
         if (spawnPoint == null)
@@ -312,10 +309,14 @@ public class CardSpawner : MonoBehaviour
             yield break;
         }
 
-        if (path == null || path.Length == 0)
+        // Validate that we have both path arrays for dynamic switching
+        Transform[] leftPathToUse = (faction == Unit.Faction.Player) ? leftPathPlayer : leftPathEnemy;
+        Transform[] rightPathToUse = (faction == Unit.Faction.Player) ? rightPathPlayer : rightPathEnemy;
+        
+        if ((leftPathToUse == null || leftPathToUse.Length == 0) && (rightPathToUse == null || rightPathToUse.Length == 0))
         {
-            Debug.LogWarning("[CardSpawner] Missing path assignment for troop spawn.");
-            // continue - it's possible a unit will target the king tower directly
+            Debug.LogWarning("[CardSpawner] Missing both left and right path assignments for troop spawn.");
+            // continue - unit will target the king tower directly
         }
 
         GameObject troopGo = Instantiate(card.unitPrefab, spawnPoint.position, Quaternion.identity);
@@ -326,7 +327,9 @@ public class CardSpawner : MonoBehaviour
         if (unit != null)
         {
             unit.faction = faction;
-            unit.path = path;
+            
+            // Set both paths for dynamic switching, starting with the originally chosen one
+            unit.SetBothPaths(leftPathToUse, rightPathToUse, left);
         }
 
         // Apply level multipliers and health
@@ -397,5 +400,120 @@ public class CardSpawner : MonoBehaviour
         }
 
         yield return null;
+    }
+
+    /// <summary>
+    /// Validates that all required paths are properly assigned for dynamic path switching
+    /// </summary>
+    public bool ValidatePathSetup()
+    {
+        bool isValid = true;
+        
+        if (leftPathPlayer == null || leftPathPlayer.Length == 0)
+        {
+            Debug.LogWarning("[CardSpawner] Left path for Player faction is not assigned or empty!");
+            isValid = false;
+        }
+        
+        if (rightPathPlayer == null || rightPathPlayer.Length == 0)
+        {
+            Debug.LogWarning("[CardSpawner] Right path for Player faction is not assigned or empty!");
+            isValid = false;
+        }
+        
+        if (leftPathEnemy == null || leftPathEnemy.Length == 0)
+        {
+            Debug.LogWarning("[CardSpawner] Left path for Enemy faction is not assigned or empty!");
+            isValid = false;
+        }
+        
+        if (rightPathEnemy == null || rightPathEnemy.Length == 0)
+        {
+            Debug.LogWarning("[CardSpawner] Right path for Enemy faction is not assigned or empty!");
+            isValid = false;
+        }
+        
+        if (playerKingTower == null)
+        {
+            Debug.LogWarning("[CardSpawner] Player King Tower is not assigned!");
+            isValid = false;
+        }
+        
+        if (enemyKingTower == null)
+        {
+            Debug.LogWarning("[CardSpawner] Enemy King Tower is not assigned!");
+            isValid = false;
+        }
+        
+        return isValid;
+    }
+
+    /// <summary>
+    /// Gets detailed information about the path setup for debugging
+    /// </summary>
+    public string GetPathSetupInfo()
+    {
+        return $"Path Setup:\n" +
+               $"Player Left Path: {(leftPathPlayer?.Length ?? 0)} waypoints\n" +
+               $"Player Right Path: {(rightPathPlayer?.Length ?? 0)} waypoints\n" +
+               $"Enemy Left Path: {(leftPathEnemy?.Length ?? 0)} waypoints\n" +
+               $"Enemy Right Path: {(rightPathEnemy?.Length ?? 0)} waypoints\n" +
+               $"Player King Tower: {(playerKingTower != null ? "Assigned" : "Missing")}\n" +
+               $"Enemy King Tower: {(enemyKingTower != null ? "Assigned" : "Missing")}";
+    }
+
+    /// <summary>
+    /// Spawn a unit with explicit lane choice (for legacy compatibility or forced lane selection)
+    /// </summary>
+    public void SpawnUnitInSpecificLane(Card card, Unit.Faction faction, bool forceLeftLane, int levelOverride = -1)
+    {
+        if (card == null) return;
+        
+        Vector3 spawnPos;
+        if (faction == Unit.Faction.Player)
+        {
+            spawnPos = forceLeftLane ? 
+                (leftLaneSpawnPlayer != null ? leftLaneSpawnPlayer.position : Vector3.left * 2f) :
+                (rightLaneSpawnPlayer != null ? rightLaneSpawnPlayer.position : Vector3.right * 2f);
+        }
+        else
+        {
+            spawnPos = forceLeftLane ? 
+                (leftLaneSpawnEnemy != null ? leftLaneSpawnEnemy.position : Vector3.left * 2f) :
+                (rightLaneSpawnEnemy != null ? rightLaneSpawnEnemy.position : Vector3.right * 2f);
+        }
+        
+        StartCoroutine(SpawnUnitFromCard(card, spawnPos, faction, levelOverride));
+    }
+
+    /// <summary>
+    /// Get information about current special building occupancy
+    /// </summary>
+    public string GetBuildingOccupancyInfo()
+    {
+        string info = "Building Spots:\n";
+        for (int i = 0; i < specialBuildingOccupants.Length; i++)
+        {
+            string status = specialBuildingOccupants[i] != null ? 
+                $"Occupied by {specialBuildingOccupants[i].name}" : "Empty";
+            info += $"Spot {i + 1}: {status}\n";
+        }
+        return info;
+    }
+
+    /// <summary>
+    /// Call this in Start() or Awake() to validate the setup
+    /// </summary>
+    void Start()
+    {
+        if (!ValidatePathSetup())
+        {
+            Debug.LogError("[CardSpawner] Path setup validation failed! Please check the inspector assignments.");
+            Debug.Log(GetPathSetupInfo());
+        }
+        else
+        {
+            Debug.Log("[CardSpawner] Path setup validation passed successfully.");
+        }
     }
 }
