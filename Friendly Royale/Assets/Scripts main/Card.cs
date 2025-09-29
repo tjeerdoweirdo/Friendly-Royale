@@ -22,6 +22,14 @@ public enum CardRarity
     Legendary
 }
 
+public enum SwarmFormation
+{
+    Circle,      // Units arranged in a circle
+    Line,        // Units arranged in a line
+    Arc,         // Units arranged in an arc/semi-circle
+    Grid         // Units arranged in a grid pattern
+}
+
 
 
 [CreateAssetMenu(menuName = "CR/Card")]
@@ -111,6 +119,16 @@ public class Card : ScriptableObject
     [Tooltip("Interval for aura effect")] public float auraInterval = 1f;
 
     // --- Building-specific fields ---
+    [Header("Swarm Settings (for multiple unit spawning)")]
+    [Tooltip("If true, this card spawns multiple units at once")]
+    public bool isSwarm = false;
+    [Tooltip("Number of units to spawn (only used if isSwarm is true)")]
+    public int swarmCount = 3;
+    [Tooltip("Distance between swarm units")]
+    public float swarmSpacing = 1.5f;
+    [Tooltip("Swarm formation type")]
+    public SwarmFormation swarmFormation = SwarmFormation.Circle;
+
     [Header("Building Settings (only used if CardType is Building)")]
     public Building.BuildingType buildingType = Building.BuildingType.Default;
 
@@ -136,4 +154,6 @@ public class Card : ScriptableObject
     public bool IsBuilding() => cardType == CardType.Building;
     public bool IsSpell() => cardType == CardType.Spell;
     public bool RequiresArena() => !string.IsNullOrEmpty(unlockArenaID);
+    public bool IsSwarm() => isSwarm && swarmCount > 1;
+    public int GetEffectiveUnitCount() => isSwarm ? swarmCount : 1;
 }

@@ -26,7 +26,9 @@ public class MegaKnightJump : MonoBehaviour
 
     [Header("Effects")]
     public GameObject jumpEffectPrefab;
+    public GameObject landingIndicatorPrefab;
     public AudioClip jumpSound;
+    public AudioClip landingSound;
     public AudioClip meleeSound;
 
     private Unit unit;
@@ -37,6 +39,7 @@ public class MegaKnightJump : MonoBehaviour
     private float lastJumpTime;
     private float lastMeleeTime;
     private AudioSource audioSource;
+    private GameObject landingIndicatorInstance;
 
     void Awake()
     {
@@ -119,6 +122,9 @@ public class MegaKnightJump : MonoBehaviour
 
         if (jumpSound != null)
             audioSource.PlayOneShot(jumpSound);
+
+        // Show landing indicator
+        ShowLandingIndicator();
     }
 
     void HandleJump()
@@ -135,10 +141,45 @@ public class MegaKnightJump : MonoBehaviour
         {
             isJumping = false;
 
+            // Hide landing indicator
+            HideLandingIndicator();
+
             if (jumpEffectPrefab != null)
                 Instantiate(jumpEffectPrefab, transform.position, Quaternion.identity);
 
+            if (landingSound != null)
+                audioSource.PlayOneShot(landingSound);
+
             SplashDamage();
+        }
+    }
+
+    void ShowLandingIndicator()
+    {
+        if (landingIndicatorPrefab != null)
+        {
+            // Hide any existing indicator first
+            HideLandingIndicator();
+            
+            // Create new indicator at target position
+            Vector3 indicatorPos = jumpTarget;
+            indicatorPos.y = 0.1f; // Slightly above ground
+            landingIndicatorInstance = Instantiate(landingIndicatorPrefab, indicatorPos, Quaternion.identity);
+            
+            // Scale the indicator to match splash radius
+            if (landingIndicatorInstance != null)
+            {
+                landingIndicatorInstance.transform.localScale = Vector3.one * splashRadius * 2f;
+            }
+        }
+    }
+
+    void HideLandingIndicator()
+    {
+        if (landingIndicatorInstance != null)
+        {
+            Destroy(landingIndicatorInstance);
+            landingIndicatorInstance = null;
         }
     }
 

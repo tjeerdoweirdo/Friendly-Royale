@@ -19,15 +19,25 @@ MonoBehaviour:
   rarity: 3
   unlockArenaID: Tutorial
   unitPrefab: {fileID: 6699622725746716999, guid: 0cadfc40d7757f14b8215ab0f4bac8d4, type: 3}
-  coinCost: 8
+  spellAsset: {fileID: 0}
+  spellLevel: 1
+  spellMaxLevel: 5
+  coinCost: 7
   baseHealth: 150
   baseDamage: 25
   baseSpeed: 2
   baseRange: 7
-  baseAttackCooldown: 2
+  baseAttackCooldown: 1.5
   maxLevel: 10
   description: The canon is the center of your push ones placed although slow can
     pack a punch
+  unitRole: 0
+  effectStat: 0
+  effectAmount: 0
+  effectDuration: 3
+  effectMode: 0
+  auraRadius: 3
+  auraInterval: 1
   buildingType: 0
   buildingLifetime: 30
   buildingHpDecayPerSecond: 0

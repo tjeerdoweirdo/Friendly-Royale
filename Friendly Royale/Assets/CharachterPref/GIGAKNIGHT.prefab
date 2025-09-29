@@ -492,8 +492,10 @@ MonoBehaviour:
   splashRadius: 5
   splashDamage: 30
   jumpEffectPrefab: {fileID: 1025285306637258, guid: d8f0099df63275647a8bcf646df1ca00, type: 3}
+  landingIndicatorPrefab: {fileID: 3769991300614942876, guid: 3aae1111247922246b0461d116952074, type: 3}
   jumpSound: {fileID: 8300000, guid: b9c89db81f7025d4a96dfcbc323c62e5, type: 3}
-  meleeSound: {fileID: 8300000, guid: 1fd31868d68903d4f9e2c4a3b7ef98f3, type: 3}
+  landingSound: {fileID: 8300000, guid: 1fd31868d68903d4f9e2c4a3b7ef98f3, type: 3}
+  meleeSound: {fileID: 8300000, guid: 0560f04ee7c91c1409d8078570b348ce, type: 3}
 --- !u!1 &5844132011463783393
 GameObject:
   m_ObjectHideFlags: 0

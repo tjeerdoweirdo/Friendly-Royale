@@ -319,87 +319,199 @@ public class CardSpawner : MonoBehaviour
             // continue - unit will target the king tower directly
         }
 
-        GameObject troopGo = Instantiate(card.unitPrefab, spawnPoint.position, Quaternion.identity);
+        // Handle swarm spawning or single unit spawning
+        Vector3[] spawnPositions = GetSwarmPositions(spawnPoint.position, card);
+        int unitsToSpawn = card.isSwarm ? card.swarmCount : 1;
 
-        Unit unit = troopGo.GetComponent<Unit>();
-        UnitHealth healthTroop = troopGo.GetComponent<UnitHealth>();
-
-        if (unit != null)
+        for (int i = 0; i < unitsToSpawn && i < spawnPositions.Length; i++)
         {
-            unit.faction = faction;
-            
-            // Set both paths for dynamic switching, starting with the originally chosen one
-            unit.SetBothPaths(leftPathToUse, rightPathToUse, left);
-        }
+            GameObject troopGo = Instantiate(card.unitPrefab, spawnPositions[i], Quaternion.identity);
 
-        // Apply level multipliers and health
-        float multiplier = 1f + 0.10f * (level - 1); // +10% per level
+            Unit unit = troopGo.GetComponent<Unit>();
+            UnitHealth healthTroop = troopGo.GetComponent<UnitHealth>();
 
-        if (healthTroop != null)
-        {
-            healthTroop.maxHealth = Mathf.RoundToInt(card.GetHealthForLevel(level));
-            healthTroop.currentHealth = healthTroop.maxHealth;
-            healthTroop.cardLevel = level;
-        }
-
-        if (unit != null)
-        {
-            unit.moveSpeed = card.baseSpeed * multiplier;
-            unit.attackDamage = Mathf.RoundToInt(card.baseDamage * multiplier);
-            unit.attackRange = card.baseRange;
-            unit.attackCooldown = card.baseAttackCooldown;
-
-            // reflection-based optional wiring (single place)
-            if (TryGetCardValue<bool>(card, "isRanged", out bool isRangedVal)) unit.isRanged = isRangedVal;
-            if (TryGetCardValue<GameObject>(card, "projectilePrefab", out GameObject projPrefabVal)) unit.projectilePrefab = projPrefabVal;
-
-            // projectileSpeed might be float/double/int depending on serialization - try common types
-            if (TryGetCardValue<float>(card, "projectileSpeed", out float projSpeedVal))
+            if (unit != null)
             {
-                unit.projectileSpeed = projSpeedVal;
-            }
-            else if (TryGetCardValue<double>(card, "projectileSpeed", out double projSpeedDoubleVal))
-            {
-                unit.projectileSpeed = (float)projSpeedDoubleVal;
-            }
-            else if (TryGetCardValue<int>(card, "projectileSpeed", out int projSpeedIntVal))
-            {
-                unit.projectileSpeed = (float)projSpeedIntVal;
+                unit.faction = faction;
+                
+                // Set both paths for dynamic switching, starting with the originally chosen one
+                unit.SetBothPaths(leftPathToUse, rightPathToUse, left);
             }
 
-            if (TryGetCardValue<string>(card, "firePointName", out string firePointNameVal) && !string.IsNullOrEmpty(firePointNameVal))
+            // Apply level multipliers and health
+            float multiplier = 1f + 0.10f * (level - 1); // +10% per level
+
+            if (healthTroop != null)
             {
-                Transform child = troopGo.transform.Find(firePointNameVal);
-                if (child != null) unit.firePoint = child;
+                healthTroop.maxHealth = Mathf.RoundToInt(card.GetHealthForLevel(level));
+                healthTroop.currentHealth = healthTroop.maxHealth;
+                healthTroop.cardLevel = level;
             }
 
-            // Attempt to find reasonable default firepoint if ranged and none assigned
-            if (unit.isRanged && unit.firePoint == null)
+            if (unit != null)
             {
-                Transform fp = troopGo.transform.Find("FirePoint") ?? troopGo.transform.Find("Muzzle") ?? troopGo.transform.Find("firePoint");
-                if (fp != null) unit.firePoint = fp;
-            }
+                unit.moveSpeed = card.baseSpeed * multiplier;
+                unit.attackDamage = Mathf.RoundToInt(card.baseDamage * multiplier);
+                unit.attackRange = card.baseRange;
+                unit.attackCooldown = card.baseAttackCooldown;
 
-            // assign endTargetTower: units of Player faction should target enemyKingTower, and enemy units target playerKingTower
-            unit.endTargetTower = (faction == Unit.Faction.Player) ? enemyKingTower : playerKingTower;
+                // reflection-based optional wiring (single place)
+                if (TryGetCardValue<bool>(card, "isRanged", out bool isRangedVal)) unit.isRanged = isRangedVal;
+                if (TryGetCardValue<GameObject>(card, "projectilePrefab", out GameObject projPrefabVal)) unit.projectilePrefab = projPrefabVal;
 
-            // Ensure NavMeshAgent / internal agent syncs with stats and starts moving
-            unit.SyncAgentToStats();
-
-            if (unit.agent != null)
-            {
-                if (unit.path != null && unit.path.Length > 0 && unit.path[0] != null)
+                // projectileSpeed might be float/double/int depending on serialization - try common types
+                if (TryGetCardValue<float>(card, "projectileSpeed", out float projSpeedVal))
                 {
-                    unit.agent.SetDestination(unit.path[0].position);
+                    unit.projectileSpeed = projSpeedVal;
                 }
-                else if (unit.endTargetTower != null)
+                else if (TryGetCardValue<double>(card, "projectileSpeed", out double projSpeedDoubleVal))
                 {
-                    unit.agent.SetDestination(unit.endTargetTower.transform.position);
+                    unit.projectileSpeed = (float)projSpeedDoubleVal;
+                }
+                else if (TryGetCardValue<int>(card, "projectileSpeed", out int projSpeedIntVal))
+                {
+                    unit.projectileSpeed = (float)projSpeedIntVal;
+                }
+
+                if (TryGetCardValue<string>(card, "firePointName", out string firePointNameVal) && !string.IsNullOrEmpty(firePointNameVal))
+                {
+                    Transform child = troopGo.transform.Find(firePointNameVal);
+                    if (child != null) unit.firePoint = child;
+                }
+
+                // Attempt to find reasonable default firepoint if ranged and none assigned
+                if (unit.isRanged && unit.firePoint == null)
+                {
+                    Transform fp = troopGo.transform.Find("FirePoint") ?? troopGo.transform.Find("Muzzle") ?? troopGo.transform.Find("firePoint");
+                    if (fp != null) unit.firePoint = fp;
+                }
+
+                // assign endTargetTower: units of Player faction should target enemyKingTower, and enemy units target playerKingTower
+                unit.endTargetTower = (faction == Unit.Faction.Player) ? enemyKingTower : playerKingTower;
+
+                // Ensure NavMeshAgent / internal agent syncs with stats and starts moving
+                unit.SyncAgentToStats();
+
+                if (unit.agent != null)
+                {
+                    if (unit.path != null && unit.path.Length > 0 && unit.path[0] != null)
+                    {
+                        unit.agent.SetDestination(unit.path[0].position);
+                    }
+                    else if (unit.endTargetTower != null)
+                    {
+                        unit.agent.SetDestination(unit.endTargetTower.transform.position);
+                    }
                 }
             }
+
+            // Small delay between spawning each unit in the swarm to avoid overlapping spawn effects
+            if (i < unitsToSpawn - 1)
+                yield return new WaitForSeconds(0.1f);
         }
 
         yield return null;
+    }
+
+    /// <summary>
+    /// Calculates spawn positions for swarm units based on formation type
+    /// </summary>
+    private Vector3[] GetSwarmPositions(Vector3 centerPos, Card card)
+    {
+        if (!card.isSwarm || card.swarmCount <= 1)
+            return new Vector3[] { centerPos };
+
+        Vector3[] positions = new Vector3[card.swarmCount];
+        
+        switch (card.swarmFormation)
+        {
+            case SwarmFormation.Circle:
+                return GetCirclePositions(centerPos, card.swarmCount, card.swarmSpacing);
+                
+            case SwarmFormation.Line:
+                return GetLinePositions(centerPos, card.swarmCount, card.swarmSpacing);
+                
+            case SwarmFormation.Arc:
+                return GetArcPositions(centerPos, card.swarmCount, card.swarmSpacing);
+                
+            case SwarmFormation.Grid:
+                return GetGridPositions(centerPos, card.swarmCount, card.swarmSpacing);
+                
+            default:
+                return GetCirclePositions(centerPos, card.swarmCount, card.swarmSpacing);
+        }
+    }
+
+    private Vector3[] GetCirclePositions(Vector3 center, int count, float spacing)
+    {
+        Vector3[] positions = new Vector3[count];
+        if (count == 1)
+        {
+            positions[0] = center;
+            return positions;
+        }
+
+        for (int i = 0; i < count; i++)
+        {
+            float angle = (2f * Mathf.PI * i) / count;
+            Vector3 offset = new Vector3(Mathf.Cos(angle) * spacing, 0, Mathf.Sin(angle) * spacing);
+            positions[i] = center + offset;
+        }
+        return positions;
+    }
+
+    private Vector3[] GetLinePositions(Vector3 center, int count, float spacing)
+    {
+        Vector3[] positions = new Vector3[count];
+        float totalWidth = (count - 1) * spacing;
+        Vector3 startPos = center - Vector3.right * (totalWidth * 0.5f);
+
+        for (int i = 0; i < count; i++)
+        {
+            positions[i] = startPos + Vector3.right * (i * spacing);
+        }
+        return positions;
+    }
+
+    private Vector3[] GetArcPositions(Vector3 center, int count, float spacing)
+    {
+        Vector3[] positions = new Vector3[count];
+        if (count == 1)
+        {
+            positions[0] = center;
+            return positions;
+        }
+
+        float arcAngle = 120f * Mathf.Deg2Rad; // 120 degree arc
+        float angleStep = arcAngle / (count - 1);
+        float startAngle = -arcAngle * 0.5f;
+
+        for (int i = 0; i < count; i++)
+        {
+            float angle = startAngle + (i * angleStep);
+            Vector3 offset = new Vector3(Mathf.Cos(angle) * spacing, 0, Mathf.Sin(angle) * spacing);
+            positions[i] = center + offset;
+        }
+        return positions;
+    }
+
+    private Vector3[] GetGridPositions(Vector3 center, int count, float spacing)
+    {
+        Vector3[] positions = new Vector3[count];
+        int rows = Mathf.CeilToInt(Mathf.Sqrt(count));
+        int cols = Mathf.CeilToInt((float)count / rows);
+
+        float totalWidth = (cols - 1) * spacing;
+        float totalHeight = (rows - 1) * spacing;
+        Vector3 startPos = center - new Vector3(totalWidth * 0.5f, 0, totalHeight * 0.5f);
+
+        for (int i = 0; i < count; i++)
+        {
+            int row = i / cols;
+            int col = i % cols;
+            positions[i] = startPos + new Vector3(col * spacing, 0, row * spacing);
+        }
+        return positions;
     }
 
     /// <summary>
