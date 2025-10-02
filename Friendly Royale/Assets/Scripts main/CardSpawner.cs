@@ -6,10 +6,9 @@ using UnityEngine.AI;
 using UnityEngine.UI;
 
 /// <summary>
-/// Spawns units from cards into left/right lanes for both Player and Enemy factions.
-/// Enhanced to try wiring ranged/projectile settings from Card (if present) and ensure agent sync.
-/// Also assigns endTargetTower (king towers) as final destination.
-/// Provides a small UI flow to choose left/right spawn after selecting a card.
+/// Spawns units from cards at specified positions for both Player and Enemy factions.
+/// Handles troop spawning, building placement, and swarm formations.
+/// Units are assigned paths and target towers automatically.
 /// </summary>
 public class CardSpawner : MonoBehaviour
 {
@@ -19,27 +18,7 @@ public class CardSpawner : MonoBehaviour
     public Transform leftLaneSpawnEnemy;
     public Transform rightLaneSpawnEnemy;
 
-    [Header("Special Building Spawn Points")]
-    public Transform specialBuildingSpawn1;
-    public Transform specialBuildingSpawn2;
-    // Tracks which building occupies each special spawn (null if empty)
-    [HideInInspector]
-    public GameObject[] specialBuildingOccupants = new GameObject[2];
 
-    /// <summary>
-    /// Call this to free a special building spot when a building is destroyed.
-    /// </summary>
-    public void FreeSpecialBuildingSpot(int spotIndex, GameObject building)
-    {
-        if (spotIndex >= 0 && spotIndex < specialBuildingOccupants.Length)
-        {
-            // Only clear if the occupant matches
-            if (specialBuildingOccupants[spotIndex] == building)
-            {
-                specialBuildingOccupants[spotIndex] = null;
-            }
-        }
-    }
 
     [Header("Lane Paths (Waypoints)")]
     public Transform[] leftPathPlayer;   // assign path waypoints in inspector
@@ -56,18 +35,9 @@ public class CardSpawner : MonoBehaviour
     [Header("Placement")]
     public float playRange = 20f; // restrict placement if needed (optional)
 
-    [Header("Optional Spawn-Choice UI (assign to enable)")]
-    [Tooltip("Panel/GameObject that contains left/right buttons (will be enabled/disabled by spawner).")]
-    public GameObject spawnChoicePanel;
-    public Button leftSpawnButton;   // assign UI Button for left
-    public Button rightSpawnButton;  // assign UI Button for right
+    // Spawn choice UI removed - drag-and-drop system handles all placement
 
-    // pending selection state
-    Card pendingCard;
-    Unit.Faction pendingFaction;
-    bool panelVisible = false;
-
-    #region Reflection helper
+    // Reflection helper for card properties
     bool TryGetCardValue<T>(object card, string name, out T value)
     {
         value = default;
@@ -93,95 +63,30 @@ public class CardSpawner : MonoBehaviour
 
         return false;
     }
-    #endregion
 
-    void Awake()
-    {
-        // ensure UI panel starts hidden
-        if (spawnChoicePanel != null) spawnChoicePanel.SetActive(false);
 
-        // wire up buttons safely (remove old listeners)
-        if (leftSpawnButton != null)
-        {
-            leftSpawnButton.onClick.RemoveAllListeners();
-            leftSpawnButton.onClick.AddListener(OnLeftSpawnClicked);
-        }
-        if (rightSpawnButton != null)
-        {
-            rightSpawnButton.onClick.RemoveAllListeners();
-            rightSpawnButton.onClick.AddListener(OnRightSpawnClicked);
-        }
-        // Cancel button removed
-    }
+
+
+    // Spawn choice UI methods removed - drag-and-drop system handles all placement
 
     /// <summary>
-    /// Public call: show the left/right spawn choice UI for the selected card.
-    /// If no UI is assigned, will spawn immediately (left by default).
-    /// </summary>
-    public void ShowSpawnChoice(Card card, Unit.Faction faction)
-    {
-        if (card == null) return;
-
-        // store pending
-        pendingCard = card;
-        pendingFaction = faction;
-
-        if (spawnChoicePanel == null || leftSpawnButton == null || rightSpawnButton == null)
-        {
-            // fallback: if no UI assigned, spawn immediately on left side
-            SpawnOnSideImmediate(true, pendingCard, pendingFaction);
-            ClearPending();
-            return;
-        }
-
-        // show UI
-        spawnChoicePanel.SetActive(true);
-        panelVisible = true;
-        // buttons are already wired to call OnLeftSpawnClicked / OnRightSpawnClicked
-    }
-
-    void HideSpawnChoice()
-    {
-        if (spawnChoicePanel != null) spawnChoicePanel.SetActive(false);
-        panelVisible = false;
-        ClearPending();
-    }
-
-    void ClearPending()
-    {
-        pendingCard = null;
-    }
-
-    void OnLeftSpawnClicked()
-    {
-        if (pendingCard == null) { HideSpawnChoice(); return; }
-        StartCoroutine(SpawnUnitFromCard(pendingCard, GetSpawnPointPosition(pendingFaction, true), pendingFaction));
-        HideSpawnChoice();
-    }
-
-    void OnRightSpawnClicked()
-    {
-        if (pendingCard == null) { HideSpawnChoice(); return; }
-        StartCoroutine(SpawnUnitFromCard(pendingCard, GetSpawnPointPosition(pendingFaction, false), pendingFaction));
-        HideSpawnChoice();
-    }
-
-    /// <summary>
-    /// Convenience: spawn immediately on a given side without showing UI.
+    /// Legacy method: spawn on a side (for backward compatibility with AI/bots).
     /// </summary>
     public void SpawnOnSideImmediate(bool leftSide, Card card, Unit.Faction faction)
     {
         if (card == null) return;
-        StartCoroutine(SpawnUnitFromCard(card, GetSpawnPointPosition(faction, leftSide), faction));
+        Vector3 spawnPos = GetSpawnPointPosition(faction, leftSide);
+        StartCoroutine(SpawnUnitAtPosition(card, spawnPos, faction));
     }
 
     /// <summary>
-    /// Overload: spawn immediately with explicit level (for enemy bots).
+    /// Legacy method: spawn on a side with explicit level (for enemy bots).
     /// </summary>
     public void SpawnOnSideImmediate(bool leftSide, Card card, Unit.Faction faction, int level)
     {
         if (card == null) return;
-        StartCoroutine(SpawnUnitFromCard(card, GetSpawnPointPosition(faction, leftSide), faction, level));
+        Vector3 spawnPos = GetSpawnPointPosition(faction, leftSide);
+        StartCoroutine(SpawnUnitAtPosition(card, spawnPos, faction, level));
     }
 
     /// <summary>
@@ -215,6 +120,220 @@ public class CardSpawner : MonoBehaviour
     }
 
     /// <summary>
+    /// Spawn a unit or building at an arbitrary world position (for drag-and-drop placement).
+    /// This version doesn't use lane restrictions and places exactly where specified.
+    /// </summary>
+    public IEnumerator SpawnUnitAtPosition(Card card, Vector3 worldPos, Unit.Faction faction, int levelOverride = -1)
+    {
+        if (card == null)
+            yield break;
+
+        // Determine level: use override if provided, else PlayerProgress
+        int level = levelOverride > 0 ? levelOverride : 1;
+        if (levelOverride <= 0)
+        {
+            string arenaID = "default";
+            
+            // Try multiple sources for arena ID
+            if (DeckManager.Instance != null && DeckManager.Instance.selectedArena != null)
+            {
+                arenaID = DeckManager.Instance.selectedArena.arenaID;
+                Debug.Log($"[CardSpawner] Using arena ID '{arenaID}' from DeckManager.selectedArena");
+            }
+            else if (DeckManager.Instance != null && !string.IsNullOrEmpty(DeckManager.Instance.selectedArenaID))
+            {
+                arenaID = DeckManager.Instance.selectedArenaID;
+                Debug.Log($"[CardSpawner] Using arena ID '{arenaID}' from DeckManager.selectedArenaID");
+            }
+            else
+            {
+                // Try to find arena in scene as fallback
+                Arena sceneArena = FindFirstObjectByType<Arena>();
+                if (sceneArena != null)
+                {
+                    arenaID = sceneArena.arenaID;
+                    Debug.Log($"[CardSpawner] Using arena ID '{arenaID}' from scene Arena component");
+                }
+                else
+                {
+                    Debug.LogWarning($"[CardSpawner] No arena found - using default arena ID '{arenaID}'");
+                }
+            }
+            
+            if (PlayerProgress.Instance != null)
+            {
+                if (string.IsNullOrEmpty(card.cardID))
+                {
+                    Debug.LogWarning($"[CardSpawner] Card '{card.cardName}' has null or empty cardID - using default level 1");
+                }
+                else
+                {
+                    level = PlayerProgress.Instance.GetCardLevel(card.cardID, arenaID);
+                    if (level < 1) level = 1;
+                    Debug.Log($"[CardSpawner] Card '{card.cardName}' (ID: '{card.cardID}') spawning at level {level} for arena '{arenaID}'");
+                }
+            }
+            else
+            {
+                Debug.LogWarning("[CardSpawner] PlayerProgress.Instance is null - using default level 1");
+            }
+        }
+
+        // --- BUILDING CASE ---
+        if (card.cardType == CardType.Building)
+        {
+            GameObject go = Instantiate(card.unitPrefab, worldPos, Quaternion.identity);
+            
+            Building building = go.GetComponent<Building>();
+            if (building != null)
+            {
+                building.faction = faction;
+                building.buildingType = (Building.BuildingType)card.buildingType;
+
+                // Defensive building stats
+                if (building.buildingType == Building.BuildingType.Defense)
+                {
+                    building.attackRange = card.defenseAttackRange;
+                    building.attackDamage = card.defenseAttackDamage;
+                    building.attackCooldown = card.defenseAttackCooldown;
+                }
+                // Spawner building stats
+                else if (building.buildingType == Building.BuildingType.Spawner)
+                {
+                    building.unitPrefab = card.spawnUnitPrefab;
+                    building.spawnInterval = card.spawnInterval;
+                }
+            }
+
+            yield return null;
+            yield break;
+        }
+
+        // --- TROOP / UNIT CASE ---
+        if (card.unitPrefab == null)
+        {
+            Debug.LogWarning("[CardSpawner] Card has no unitPrefab assigned for troop spawn.");
+            yield break;
+        }
+
+        // For position-based spawning, choose the nearest appropriate path
+        bool useLeftPath = worldPos.x < 0f; // Simple heuristic based on x position
+        Transform[] pathToUse = null;
+        
+        if (faction == Unit.Faction.Player)
+        {
+            pathToUse = useLeftPath ? leftPathPlayer : rightPathPlayer;
+        }
+        else
+        {
+            pathToUse = useLeftPath ? leftPathEnemy : rightPathEnemy;
+        }
+
+        // Handle swarm spawning or single unit spawning
+        Vector3[] spawnPositions = GetSwarmPositions(worldPos, card);
+        int unitsToSpawn = card.isSwarm ? card.swarmCount : 1;
+
+        for (int i = 0; i < unitsToSpawn && i < spawnPositions.Length; i++)
+        {
+            GameObject troopGo = Instantiate(card.unitPrefab, spawnPositions[i], Quaternion.identity);
+
+            Unit unit = troopGo.GetComponent<Unit>();
+            UnitHealth healthTroop = troopGo.GetComponent<UnitHealth>();
+
+            if (unit != null)
+            {
+                unit.faction = faction;
+                
+                // Set path if available, but don't require it for position-based spawning
+                if (pathToUse != null && pathToUse.Length > 0)
+                {
+                    Transform[] leftPathToUse = (faction == Unit.Faction.Player) ? leftPathPlayer : leftPathEnemy;
+                    Transform[] rightPathToUse = (faction == Unit.Faction.Player) ? rightPathPlayer : rightPathEnemy;
+                    unit.SetBothPaths(leftPathToUse, rightPathToUse, useLeftPath);
+                }
+                else
+                {
+                    // No paths available - unit will target king tower directly
+                    Debug.Log($"[CardSpawner] No paths available for {card.cardName}, unit will target end tower directly");
+                }
+            }
+
+            // Apply level multipliers and health
+            float multiplier = 1f + 0.10f * (level - 1); // +10% per level
+
+            if (healthTroop != null)
+            {
+                healthTroop.maxHealth = Mathf.RoundToInt(card.GetHealthForLevel(level));
+                healthTroop.currentHealth = healthTroop.maxHealth;
+                healthTroop.cardLevel = level;
+            }
+
+            if (unit != null)
+            {
+                unit.moveSpeed = card.baseSpeed * multiplier;
+                unit.attackDamage = Mathf.RoundToInt(card.baseDamage * multiplier);
+                unit.attackRange = card.baseRange;
+                unit.attackCooldown = card.baseAttackCooldown;
+
+                // reflection-based optional wiring (single place)
+                if (TryGetCardValue<bool>(card, "isRanged", out bool isRangedVal)) unit.isRanged = isRangedVal;
+                if (TryGetCardValue<GameObject>(card, "projectilePrefab", out GameObject projPrefabVal)) unit.projectilePrefab = projPrefabVal;
+
+                // projectileSpeed might be float/double/int depending on serialization - try common types
+                if (TryGetCardValue<float>(card, "projectileSpeed", out float projSpeedVal))
+                {
+                    unit.projectileSpeed = projSpeedVal;
+                }
+                else if (TryGetCardValue<double>(card, "projectileSpeed", out double projSpeedDoubleVal))
+                {
+                    unit.projectileSpeed = (float)projSpeedDoubleVal;
+                }
+                else if (TryGetCardValue<int>(card, "projectileSpeed", out int projSpeedIntVal))
+                {
+                    unit.projectileSpeed = (float)projSpeedIntVal;
+                }
+
+                if (TryGetCardValue<string>(card, "firePointName", out string firePointNameVal) && !string.IsNullOrEmpty(firePointNameVal))
+                {
+                    Transform child = troopGo.transform.Find(firePointNameVal);
+                    if (child != null) unit.firePoint = child;
+                }
+
+                // Attempt to find reasonable default firepoint if ranged and none assigned
+                if (unit.isRanged && unit.firePoint == null)
+                {
+                    Transform fp = troopGo.transform.Find("FirePoint") ?? troopGo.transform.Find("Muzzle") ?? troopGo.transform.Find("firePoint");
+                    if (fp != null) unit.firePoint = fp;
+                }
+
+                // assign endTargetTower: units of Player faction should target enemyKingTower, and enemy units target playerKingTower
+                unit.endTargetTower = (faction == Unit.Faction.Player) ? enemyKingTower : playerKingTower;
+
+                // Ensure NavMeshAgent / internal agent syncs with stats and starts moving
+                unit.SyncAgentToStats();
+
+                if (unit.agent != null)
+                {
+                    if (unit.path != null && unit.path.Length > 0 && unit.path[0] != null)
+                    {
+                        unit.agent.SetDestination(unit.path[0].position);
+                    }
+                    else if (unit.endTargetTower != null)
+                    {
+                        unit.agent.SetDestination(unit.endTargetTower.transform.position);
+                    }
+                }
+            }
+
+            // Small delay between spawning each unit in the swarm to avoid overlapping spawn effects
+            if (i < unitsToSpawn - 1)
+                yield return new WaitForSeconds(0.1f);
+        }
+
+        yield return null;
+    }
+
+    /// <summary>
     /// Overload: spawn with explicit level (for bots).
     /// </summary>
     public IEnumerator SpawnUnitFromCard(Card card, Vector3 worldPos, Unit.Faction faction, int levelOverride)
@@ -227,36 +346,56 @@ public class CardSpawner : MonoBehaviour
         if (levelOverride <= 0)
         {
             string arenaID = "default";
+            
+            // Try multiple sources for arena ID
             if (DeckManager.Instance != null && DeckManager.Instance.selectedArena != null)
+            {
                 arenaID = DeckManager.Instance.selectedArena.arenaID;
+                Debug.Log($"[CardSpawner] Using arena ID '{arenaID}' from DeckManager.selectedArena");
+            }
+            else if (DeckManager.Instance != null && !string.IsNullOrEmpty(DeckManager.Instance.selectedArenaID))
+            {
+                arenaID = DeckManager.Instance.selectedArenaID;
+                Debug.Log($"[CardSpawner] Using arena ID '{arenaID}' from DeckManager.selectedArenaID");
+            }
+            else
+            {
+                // Try to find arena in scene as fallback
+                Arena sceneArena = FindFirstObjectByType<Arena>();
+                if (sceneArena != null)
+                {
+                    arenaID = sceneArena.arenaID;
+                    Debug.Log($"[CardSpawner] Using arena ID '{arenaID}' from scene Arena component");
+                }
+                else
+                {
+                    Debug.LogWarning($"[CardSpawner] No arena found - using default arena ID '{arenaID}'");
+                }
+            }
+            
             if (PlayerProgress.Instance != null)
             {
-                level = PlayerProgress.Instance.GetCardLevel(card.cardID, arenaID);
-                if (level < 1) level = 1;
+                if (string.IsNullOrEmpty(card.cardID))
+                {
+                    Debug.LogWarning($"[CardSpawner] Card '{card.cardName}' has null or empty cardID - using default level 1");
+                }
+                else
+                {
+                    level = PlayerProgress.Instance.GetCardLevel(card.cardID, arenaID);
+                    if (level < 1) level = 1;
+                    Debug.Log($"[CardSpawner] Card '{card.cardName}' (ID: '{card.cardID}') spawning at level {level} for arena '{arenaID}'");
+                }
+            }
+            else
+            {
+                Debug.LogWarning("[CardSpawner] PlayerProgress.Instance is null - using default level 1");
             }
         }
 
         // --- BUILDING CASE ---
         if (card.cardType == CardType.Building)
         {
-            // Remove restriction: allow placement even if both spots are occupied
-            int spotIndex = 0;
-            Transform spawnT = specialBuildingSpawn1;
-            // Alternate between spawn points for new buildings
-            if (specialBuildingSpawn2 != null && (specialBuildingOccupants[0] != null)) {
-                spotIndex = 1;
-                spawnT = specialBuildingSpawn2;
-            }
-            if (spawnT == null)
-            {
-                Debug.LogWarning($"Special building spawn point {spotIndex + 1} is not assigned.");
-                yield break;
-            }
-
-            GameObject go = Instantiate(card.unitPrefab, spawnT.position, spawnT.rotation);
-            // Track only the first two buildings for compatibility, but do not restrict placement
-            if (spotIndex < specialBuildingOccupants.Length)
-                specialBuildingOccupants[spotIndex] = go;
+            GameObject go = Instantiate(card.unitPrefab, worldPos, Quaternion.identity);
 
             Building building = go.GetComponent<Building>();
             if (building != null)
@@ -414,32 +553,14 @@ public class CardSpawner : MonoBehaviour
     }
 
     /// <summary>
-    /// Calculates spawn positions for swarm units based on formation type
+    /// Calculates spawn positions for swarm units in a circle formation
     /// </summary>
     private Vector3[] GetSwarmPositions(Vector3 centerPos, Card card)
     {
         if (!card.isSwarm || card.swarmCount <= 1)
             return new Vector3[] { centerPos };
 
-        Vector3[] positions = new Vector3[card.swarmCount];
-        
-        switch (card.swarmFormation)
-        {
-            case SwarmFormation.Circle:
-                return GetCirclePositions(centerPos, card.swarmCount, card.swarmSpacing);
-                
-            case SwarmFormation.Line:
-                return GetLinePositions(centerPos, card.swarmCount, card.swarmSpacing);
-                
-            case SwarmFormation.Arc:
-                return GetArcPositions(centerPos, card.swarmCount, card.swarmSpacing);
-                
-            case SwarmFormation.Grid:
-                return GetGridPositions(centerPos, card.swarmCount, card.swarmSpacing);
-                
-            default:
-                return GetCirclePositions(centerPos, card.swarmCount, card.swarmSpacing);
-        }
+        return GetCirclePositions(centerPos, card.swarmCount, card.swarmSpacing);
     }
 
     private Vector3[] GetCirclePositions(Vector3 center, int count, float spacing)
@@ -460,172 +581,20 @@ public class CardSpawner : MonoBehaviour
         return positions;
     }
 
-    private Vector3[] GetLinePositions(Vector3 center, int count, float spacing)
-    {
-        Vector3[] positions = new Vector3[count];
-        float totalWidth = (count - 1) * spacing;
-        Vector3 startPos = center - Vector3.right * (totalWidth * 0.5f);
 
-        for (int i = 0; i < count; i++)
-        {
-            positions[i] = startPos + Vector3.right * (i * spacing);
-        }
-        return positions;
-    }
 
-    private Vector3[] GetArcPositions(Vector3 center, int count, float spacing)
-    {
-        Vector3[] positions = new Vector3[count];
-        if (count == 1)
-        {
-            positions[0] = center;
-            return positions;
-        }
 
-        float arcAngle = 120f * Mathf.Deg2Rad; // 120 degree arc
-        float angleStep = arcAngle / (count - 1);
-        float startAngle = -arcAngle * 0.5f;
 
-        for (int i = 0; i < count; i++)
-        {
-            float angle = startAngle + (i * angleStep);
-            Vector3 offset = new Vector3(Mathf.Cos(angle) * spacing, 0, Mathf.Sin(angle) * spacing);
-            positions[i] = center + offset;
-        }
-        return positions;
-    }
 
-    private Vector3[] GetGridPositions(Vector3 center, int count, float spacing)
-    {
-        Vector3[] positions = new Vector3[count];
-        int rows = Mathf.CeilToInt(Mathf.Sqrt(count));
-        int cols = Mathf.CeilToInt((float)count / rows);
 
-        float totalWidth = (cols - 1) * spacing;
-        float totalHeight = (rows - 1) * spacing;
-        Vector3 startPos = center - new Vector3(totalWidth * 0.5f, 0, totalHeight * 0.5f);
 
-        for (int i = 0; i < count; i++)
-        {
-            int row = i / cols;
-            int col = i % cols;
-            positions[i] = startPos + new Vector3(col * spacing, 0, row * spacing);
-        }
-        return positions;
-    }
 
-    /// <summary>
-    /// Validates that all required paths are properly assigned for dynamic path switching
-    /// </summary>
-    public bool ValidatePathSetup()
-    {
-        bool isValid = true;
-        
-        if (leftPathPlayer == null || leftPathPlayer.Length == 0)
-        {
-            Debug.LogWarning("[CardSpawner] Left path for Player faction is not assigned or empty!");
-            isValid = false;
-        }
-        
-        if (rightPathPlayer == null || rightPathPlayer.Length == 0)
-        {
-            Debug.LogWarning("[CardSpawner] Right path for Player faction is not assigned or empty!");
-            isValid = false;
-        }
-        
-        if (leftPathEnemy == null || leftPathEnemy.Length == 0)
-        {
-            Debug.LogWarning("[CardSpawner] Left path for Enemy faction is not assigned or empty!");
-            isValid = false;
-        }
-        
-        if (rightPathEnemy == null || rightPathEnemy.Length == 0)
-        {
-            Debug.LogWarning("[CardSpawner] Right path for Enemy faction is not assigned or empty!");
-            isValid = false;
-        }
-        
-        if (playerKingTower == null)
-        {
-            Debug.LogWarning("[CardSpawner] Player King Tower is not assigned!");
-            isValid = false;
-        }
-        
-        if (enemyKingTower == null)
-        {
-            Debug.LogWarning("[CardSpawner] Enemy King Tower is not assigned!");
-            isValid = false;
-        }
-        
-        return isValid;
-    }
 
-    /// <summary>
-    /// Gets detailed information about the path setup for debugging
-    /// </summary>
-    public string GetPathSetupInfo()
-    {
-        return $"Path Setup:\n" +
-               $"Player Left Path: {(leftPathPlayer?.Length ?? 0)} waypoints\n" +
-               $"Player Right Path: {(rightPathPlayer?.Length ?? 0)} waypoints\n" +
-               $"Enemy Left Path: {(leftPathEnemy?.Length ?? 0)} waypoints\n" +
-               $"Enemy Right Path: {(rightPathEnemy?.Length ?? 0)} waypoints\n" +
-               $"Player King Tower: {(playerKingTower != null ? "Assigned" : "Missing")}\n" +
-               $"Enemy King Tower: {(enemyKingTower != null ? "Assigned" : "Missing")}";
-    }
 
-    /// <summary>
-    /// Spawn a unit with explicit lane choice (for legacy compatibility or forced lane selection)
-    /// </summary>
-    public void SpawnUnitInSpecificLane(Card card, Unit.Faction faction, bool forceLeftLane, int levelOverride = -1)
-    {
-        if (card == null) return;
-        
-        Vector3 spawnPos;
-        if (faction == Unit.Faction.Player)
-        {
-            spawnPos = forceLeftLane ? 
-                (leftLaneSpawnPlayer != null ? leftLaneSpawnPlayer.position : Vector3.left * 2f) :
-                (rightLaneSpawnPlayer != null ? rightLaneSpawnPlayer.position : Vector3.right * 2f);
-        }
-        else
-        {
-            spawnPos = forceLeftLane ? 
-                (leftLaneSpawnEnemy != null ? leftLaneSpawnEnemy.position : Vector3.left * 2f) :
-                (rightLaneSpawnEnemy != null ? rightLaneSpawnEnemy.position : Vector3.right * 2f);
-        }
-        
-        StartCoroutine(SpawnUnitFromCard(card, spawnPos, faction, levelOverride));
-    }
 
-    /// <summary>
-    /// Get information about current special building occupancy
-    /// </summary>
-    public string GetBuildingOccupancyInfo()
-    {
-        string info = "Building Spots:\n";
-        for (int i = 0; i < specialBuildingOccupants.Length; i++)
-        {
-            string status = specialBuildingOccupants[i] != null ? 
-                $"Occupied by {specialBuildingOccupants[i].name}" : "Empty";
-            info += $"Spot {i + 1}: {status}\n";
-        }
-        return info;
-    }
 
-    /// <summary>
-    /// Call this in Start() or Awake() to validate the setup
-    /// </summary>
     void Start()
     {
-        if (!ValidatePathSetup())
-        {
-            Debug.LogError("[CardSpawner] Path setup validation failed! Please check the inspector assignments.");
-            Debug.Log(GetPathSetupInfo());
-        }
-        else
-        {
-            Debug.Log("[CardSpawner] Path setup validation passed successfully.");
-        }
+        // CardSpawner initialized
     }
 }

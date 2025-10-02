@@ -29,6 +29,26 @@ public class FullDeckSelector6 : MonoBehaviour
             ShowInfoForCard(card);
         }
     }
+    
+    // Called when any card level changes in PlayerProgress
+    private void OnCardLevelChanged(string cardID, string arenaID, int newLevel)
+    {
+        // Update deck display if the changed card is in current deck
+        bool inDeck = currentDeck != null && currentDeck.Any(c => c != null && c.cardID == cardID);
+        if (inDeck)
+        {
+            UpdateCurrentDeckDisplay();
+        }
+        
+        // Update info panel if it's showing this card
+        if (infoPanel != null && infoPanel.activeSelf && lastInfoCard != null && lastInfoCard.cardID == cardID)
+        {
+            ShowInfoForCard(lastInfoCard);
+        }
+        
+        // Update the card list as well (in case it shows card levels)
+        PopulateCardList();
+    }
     [Header("Info Panel Stat Texts")]
     [Tooltip("TMP_Text to display card health. Optional.")]
     public TMP_Text infoHealthText;
@@ -71,14 +91,14 @@ public class FullDeckSelector6 : MonoBehaviour
 
     [Header("Controls")]
     public TMP_Dropdown arenaDropdown; // filter dropdown
-    public TMP_Dropdown selectableArenaDropdown; // NEW: for deck save/load/start
+    public TMP_Dropdown selectableArenaDropdown; // NEW: for deck save/load
     public TMP_InputField searchInput;
     public TMP_Dropdown rarityFilterDropdown;
     public TMP_Dropdown sortDropdown;
     public Button quickFillButton;
     public Button clearDeckButton;
         // Removed save/load deck buttons: deck is always auto-saved per arena
-    public Button startBattleButton;
+        // Removed startBattleButton: matchmaking is now handled by separate MatchmakingManager
 
 
 
@@ -133,7 +153,7 @@ public class FullDeckSelector6 : MonoBehaviour
         if (quickFillButton != null) quickFillButton.onClick.AddListener(OnQuickFill);
         if (clearDeckButton != null) clearDeckButton.onClick.AddListener(OnClearDeck);
             // Removed save/load deck button listeners: deck is always auto-saved per arena
-        if (startBattleButton != null) startBattleButton.onClick.AddListener(OnStartBattle);
+            // startBattleButton removed - matchmaking handled separately
 
         if (searchInput != null) searchInput.onValueChanged.AddListener((s) => PopulateCardList());
         if (rarityFilterDropdown != null) rarityFilterDropdown.onValueChanged.AddListener((i) => PopulateCardList());
@@ -158,12 +178,18 @@ public class FullDeckSelector6 : MonoBehaviour
         {
             shop.OnCardUpgraded -= OnCardUpgradedFromShop;
         }
+        
+        // Unsubscribe from PlayerProgress card level changes
+        if (playerProgress != null)
+        {
+            playerProgress.OnCardLevelChanged -= OnCardLevelChanged;
+        }
 
         UnityEngine.SceneManagement.SceneManager.sceneLoaded -= OnSceneLoaded;
         if (quickFillButton != null) quickFillButton.onClick.RemoveAllListeners();
         if (clearDeckButton != null) clearDeckButton.onClick.RemoveAllListeners();
             // Removed save/load deck button listeners
-        if (startBattleButton != null) startBattleButton.onClick.RemoveAllListeners();
+            // startBattleButton removed - matchmaking handled separately
 
         if (searchInput != null) searchInput.onValueChanged.RemoveAllListeners();
         if (rarityFilterDropdown != null) rarityFilterDropdown.onValueChanged.RemoveAllListeners();
@@ -207,6 +233,8 @@ public class FullDeckSelector6 : MonoBehaviour
                 if (playerProgress != null && !playerProgressFound) {
                     Debug.Log("DeckSelectorUI: playerProgress found after " + tries + " tries.");
                     playerProgressFound = true;
+                    // Subscribe to card level changes once PlayerProgress is available
+                    playerProgress.OnCardLevelChanged += OnCardLevelChanged;
                 }
             }
             if (arenaManager == null) {
@@ -237,10 +265,19 @@ public class FullDeckSelector6 : MonoBehaviour
         currentDeck = new List<Card>(new Card[deckSize]);
         spawnedCurrentCards = new GameObject[deckSize];
 
-        // Try to load the last used deck from PlayerProgress (always uses "global" key)
+        // Try to load the last used deck from PlayerProgress using selectedArena's ID
         if (playerProgress != null && deckManager != null && deckManager.allCards != null)
         {
-            var savedIds = playerProgress.LoadSelectedDeckForArena("global");
+            string arenaId = (selectedArena != null) ? selectedArena.arenaID : "global";
+            var savedIds = playerProgress.LoadSelectedDeckForArena(arenaId);
+            
+            // If no deck found for this arena, try loading from "global" as fallback
+            if ((savedIds == null || savedIds.Count == 0) && arenaId != "global")
+            {
+                Debug.Log($"No deck found for arena '{arenaId}', trying global fallback.");
+                savedIds = playerProgress.LoadSelectedDeckForArena("global");
+            }
+            
             if (savedIds != null && savedIds.Count > 0)
             {
                 for (int i = 0; i < deckSize; i++)
@@ -285,9 +322,63 @@ public class FullDeckSelector6 : MonoBehaviour
         OnSelectableArenaChanged(selectableArenaDropdown != null ? selectableArenaDropdown.value : 0);
         PopulateCardList();
         UpdateCurrentDeckDisplay();
+        
+        // Ensure PlayerProgress event subscription (in case it wasn't available in the coroutine)
+        if (playerProgress != null)
+        {
+            // Remove any existing subscription to avoid duplicates
+            playerProgress.OnCardLevelChanged -= OnCardLevelChanged;
+            // Add the subscription
+            playerProgress.OnCardLevelChanged += OnCardLevelChanged;
+        }
     // ...existing code...
     }
 
+    void ReloadDeckForArena()
+    {
+        if (currentDeck == null) currentDeck = new List<Card>(new Card[deckSize]);
+        
+        // Try to load the deck for the current selectedArena
+        if (playerProgress != null && deckManager != null && deckManager.allCards != null)
+        {
+            string arenaId = (selectedArena != null) ? selectedArena.arenaID : "global";
+            var savedIds = playerProgress.LoadSelectedDeckForArena(arenaId);
+            
+            // If no deck found for this arena, try loading from "global" as fallback
+            if ((savedIds == null || savedIds.Count == 0) && arenaId != "global")
+            {
+                Debug.Log($"No deck found for arena '{arenaId}', trying global fallback.");
+                savedIds = playerProgress.LoadSelectedDeckForArena("global");
+            }
+            
+            if (savedIds != null && savedIds.Count > 0)
+            {
+                for (int i = 0; i < deckSize; i++)
+                {
+                    string id = (i < savedIds.Count) ? savedIds[i] : null;
+                    Card card = null;
+                    if (!string.IsNullOrEmpty(id))
+                        card = deckManager.allCards.FirstOrDefault(c => c.cardID == id);
+                    currentDeck[i] = card;
+                }
+                Debug.Log($"Loaded deck with {savedIds.Count} cards for arena '{arenaId}'");
+            }
+            else
+            {
+                // Clear the deck if no saved deck found
+                for (int i = 0; i < deckSize; i++)
+                    currentDeck[i] = null;
+                Debug.Log($"No saved deck found for arena '{arenaId}', cleared current deck");
+            }
+            
+            // Sync to DeckManager's selectedCards
+            if (deckManager.selectedCards != null && deckManager.selectedCards.Count == deckSize)
+            {
+                for (int i = 0; i < deckSize; i++)
+                    deckManager.selectedCards[i] = currentDeck[i];
+            }
+        }
+    }
 
     // ---------- panel control ----------
     public void Show()
@@ -382,8 +473,11 @@ public class FullDeckSelector6 : MonoBehaviour
             return;
         }
         selectedArena = allArenas[Mathf.Clamp(idx, 0, allArenas.Count - 1)];
+        Debug.Log($"Arena selected: '{selectedArena.arenaID}' - reloading deck");
+        
+        // Reload the deck for this arena
+        ReloadDeckForArena();
         UpdateCurrentDeckDisplay();
-            UpdateCurrentDeckDisplay();
     }
 
     // ---------- rarity dropdown ----------
@@ -549,22 +643,8 @@ public class FullDeckSelector6 : MonoBehaviour
             playerProgress.SaveSelectedDeckForArena("global", ids);
         }
 
-        // Enable/disable startBattleButton and set color based on deck completeness
-        if (startBattleButton != null)
-        {
-            bool isFull = currentDeck.All(c => c != null);
-            var btnImage = startBattleButton.GetComponent<Image>();
-            if (!isFull)
-            {
-                startBattleButton.interactable = false;
-                if (btnImage != null) btnImage.color = Color.red;
-            }
-            else
-            {
-                startBattleButton.interactable = true;
-                if (btnImage != null) btnImage.color = Color.white;
-            }
-        }
+        // Deck completeness is now handled by separate MatchmakingManager
+        // Battle button functionality moved to dedicated matchmaking system
     }
 
     // ---------- info panel methods ----------
@@ -808,9 +888,10 @@ public class FullDeckSelector6 : MonoBehaviour
 
     void OnSaveDeck()
     {
-    var ids = currentDeck.Where(c => c != null).Select(c => c.cardID).ToList();
-    playerProgress.SaveSelectedDeckForArena("global", ids);
-    Debug.Log("Deck saved.");
+        var ids = currentDeck.Where(c => c != null).Select(c => c.cardID).ToList();
+        string arenaId = (selectedArena != null) ? selectedArena.arenaID : "global";
+        playerProgress.SaveSelectedDeckForArena(arenaId, ids);
+        Debug.Log($"Deck saved for arena '{arenaId}' with {ids.Count} cards: [{string.Join(", ", ids)}]");
     }
 
     void OnLoadDeck()
@@ -819,21 +900,7 @@ public class FullDeckSelector6 : MonoBehaviour
     }
 
 
-    void OnStartBattle()
-    {
-        if (selectedArena == null) { Debug.LogError("No arena."); return; }
-        // Use deckManager.selectedCards as the source of truth
-        var deckToUse = deckManager.selectedCards != null ? deckManager.selectedCards.Where(c => c != null).ToList() : new List<Card>();
-        if (deckToUse.Count < 4)
-        {
-            Debug.LogWarning("You must select at least 4 cards to start a match.");
-            // Optionally, show a UI warning here
-            return;
-        }
-        deckManager.SetStartingDeck(deckToUse, selectedArena);
-    playerProgress.SaveSelectedDeckForArena("global", deckToUse.Select(c => c.cardID).ToList());
-        if (!string.IsNullOrEmpty(selectedArena.sceneName)) SceneManager.LoadScene(selectedArena.sceneName);
-    }
+    // OnStartBattle method removed - matchmaking now handled by MatchmakingManager
 
     // Gold/trophy UI is now handled by GoldTrophyUI.cs
 

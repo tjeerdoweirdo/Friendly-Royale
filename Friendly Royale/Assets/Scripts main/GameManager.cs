@@ -4,8 +4,16 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using TMPro;
 using UnityEngine.UI;
+using Unity.Netcode;
 
-public class GameManager : MonoBehaviour
+public enum MatchResult
+{
+    Win,
+    Loss,
+    Draw
+}
+
+public class GameManager : NetworkBehaviour
 {
     [Header("Match Settings")]
     public float matchDuration = 180f;
@@ -26,6 +34,24 @@ public class GameManager : MonoBehaviour
     public TMP_Text rewardText;
     public Button continueButton;
 
+    // Network Variables for multiplayer synchronization.
+    // Give server write permission explicitly so only the server can update them.
+    private NetworkVariable<float> networkTimeLeft = new NetworkVariable<float>(
+        0f,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
+    private NetworkVariable<bool> networkMatchActive = new NetworkVariable<bool>(
+        false,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
+    private NetworkVariable<bool> networkResultShown = new NetworkVariable<bool>(
+        false,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
+    // Local variables (for single player or local read convenience)
     float timeLeft = 0f;
     bool matchActive = false;
     bool resultShown = false;
@@ -47,7 +73,7 @@ public class GameManager : MonoBehaviour
     {
         // UI: Prefer inspector, fallback to scene search
         if (timerText == null)
-            timerText = FindObjectOfType<TMP_Text>(true); // fallback: first TMP_Text found
+            timerText = UnityEngine.Object.FindFirstObjectByType<TMP_Text>();
         if (resultText == null)
             resultText = GameObject.Find("ResultText")?.GetComponent<TMP_Text>();
         if (rewardPanel == null)
@@ -55,7 +81,7 @@ public class GameManager : MonoBehaviour
         if (rewardText == null && rewardPanel != null)
             rewardText = rewardPanel.GetComponentInChildren<TMP_Text>(true);
         if (continueButton == null)
-            continueButton = FindObjectOfType<Button>(true);
+            continueButton = UnityEngine.Object.FindFirstObjectByType<Button>();
 
         // Towers: Prefer inspector, fallback to tag search
         if (playerKingTower == null)
@@ -72,24 +98,98 @@ public class GameManager : MonoBehaviour
 
     void Update()
     {
-        if (!matchActive) return;
+        // Use network variables if we're in multiplayer, otherwise use local variables
+        bool isActive = IsNetworkActive() ? networkMatchActive.Value : matchActive;
+        if (!isActive) return;
 
-        timeLeft -= Time.deltaTime;
-        if (timeLeft < 0f) timeLeft = 0f;
+        // Only the server should update the timer in multiplayer
+        if (IsNetworkActive())
+        {
+            if (IsServer)
+            {
+                networkTimeLeft.Value -= Time.deltaTime;
+                if (networkTimeLeft.Value < 0f) networkTimeLeft.Value = 0f;
+
+                if (networkTimeLeft.Value <= 0f && networkMatchActive.Value)
+                {
+                    // call a local server method that resolves the winner and sends client RPC
+                    EndMatchByTimeOnServer();
+                }
+            }
+
+            // Clients (and host) should read the authoritative time variable
+            timeLeft = networkTimeLeft.Value;
+            matchActive = networkMatchActive.Value;
+            resultShown = networkResultShown.Value;
+        }
+        else
+        {
+            // Single player mode
+            timeLeft -= Time.deltaTime;
+            if (timeLeft < 0f) timeLeft = 0f;
+
+            if (timeLeft <= 0f && matchActive)
+            {
+                EndMatchByTime();
+            }
+        }
 
         UpdateTimerUI();
+    }
 
-        if (timeLeft <= 0f)
-        {
-            EndMatchByTime();
-        }
+    // Helper method to check if we're in network mode
+    private bool IsNetworkActive()
+    {
+        return NetworkManager.Singleton != null && (NetworkManager.Singleton.IsHost || NetworkManager.Singleton.IsClient);
     }
 
     public void StartMatch()
     {
-        timeLeft = Mathf.Max(0f, matchDuration);
-        matchActive = true;
-        resultShown = false;
+        if (IsNetworkActive())
+        {
+            // Only the server should initiate the match start and set network variables.
+            if (IsServer)
+            {
+                StartMatchServerRpc();
+            }
+            // Clients do nothing here; StartMatchClientRpc will be invoked by server and sync local state.
+        }
+        else
+        {
+            // Single player mode
+            timeLeft = Mathf.Max(0f, matchDuration);
+            matchActive = true;
+            resultShown = false;
+
+            if (resultText != null) resultText.gameObject.SetActive(false);
+            if (rewardPanel != null) rewardPanel.SetActive(false);
+            if (continueButton != null) continueButton.gameObject.SetActive(false);
+
+            if (Time.timeScale == 0f) Time.timeScale = 1f;
+
+            UpdateTimerUI();
+        }
+    }
+
+    [ServerRpc(RequireOwnership = false)]
+    private void StartMatchServerRpc()
+    {
+        // Server sets authoritative variables
+        networkTimeLeft.Value = Mathf.Max(0f, matchDuration);
+        networkMatchActive.Value = true;
+        networkResultShown.Value = false;
+
+        // Notify clients to update local UI / variables
+        StartMatchClientRpc();
+    }
+
+    [ClientRpc]
+    private void StartMatchClientRpc()
+    {
+        // Sync local variables from the network variables (they were already written by server)
+        timeLeft = networkTimeLeft.Value;
+        matchActive = networkMatchActive.Value;
+        resultShown = networkResultShown.Value;
 
         if (resultText != null) resultText.gameObject.SetActive(false);
         if (rewardPanel != null) rewardPanel.SetActive(false);
@@ -109,6 +209,7 @@ public class GameManager : MonoBehaviour
 
     public void EndMatchByTime()
     {
+        // Single-player/time-expired resolution (non-networked)
         float playerHP = 0f, enemyHP = 0f;
         float playerMax = 0f, enemyMax = 0f;
 
@@ -118,65 +219,167 @@ public class GameManager : MonoBehaviour
         if (enemyKingTower != null)
             TryGetHealthInfo(enemyKingTower, out enemyHP, out enemyMax);
 
-        if (playerHP > enemyHP) EndMatch(true, $"Victory by HP ({Mathf.CeilToInt(playerHP)} vs {Mathf.CeilToInt(enemyHP)})");
-        else if (enemyHP > playerHP) EndMatch(false, $"Defeat by HP ({Mathf.CeilToInt(playerHP)} vs {Mathf.CeilToInt(enemyHP)})");
-        else EndMatch(false, "Draw — treat as Defeat");
+        if (playerHP > enemyHP) EndMatch(MatchResult.Win, $"Victory by HP ({Mathf.CeilToInt(playerHP)} vs {Mathf.CeilToInt(enemyHP)})");
+        else if (enemyHP > playerHP) EndMatch(MatchResult.Loss, $"Defeat by HP ({Mathf.CeilToInt(playerHP)} vs {Mathf.CeilToInt(enemyHP)})");
+        else EndMatch(MatchResult.Draw, $"Draw ({Mathf.CeilToInt(playerHP)} vs {Mathf.CeilToInt(enemyHP)})");
     }
 
-    public void EndMatch(bool playerWon, string reason = "")
+    // Server-only method that resolves result and then notifies clients
+    private void EndMatchByTimeOnServer()
+    {
+        if (!IsServer) return;
+
+        float playerHP = 0f, enemyHP = 0f;
+        float playerMax = 0f, enemyMax = 0f;
+
+        if (playerKingTower != null)
+            TryGetHealthInfo(playerKingTower, out playerHP, out playerMax);
+
+        if (enemyKingTower != null)
+            TryGetHealthInfo(enemyKingTower, out enemyHP, out enemyMax);
+
+        MatchResult result;
+        string reason;
+
+        if (playerHP > enemyHP)
+        {
+            result = MatchResult.Win;
+            reason = $"Victory by HP ({Mathf.CeilToInt(playerHP)} vs {Mathf.CeilToInt(enemyHP)})";
+        }
+        else if (enemyHP > playerHP)
+        {
+            result = MatchResult.Loss;
+            reason = $"Defeat by HP ({Mathf.CeilToInt(playerHP)} vs {Mathf.CeilToInt(enemyHP)})";
+        }
+        else
+        {
+            result = MatchResult.Draw;
+            reason = $"Draw ({Mathf.CeilToInt(playerHP)} vs {Mathf.CeilToInt(enemyHP)})";
+        }
+
+        // Set authoritative network flags and notify clients
+        EndMatchNetworkedServerRpc(result, reason);
+    }
+
+    // Server sets authoritative state and sends a ClientRpc to tell everyone about the result
+    [ServerRpc(RequireOwnership = false)]
+    private void EndMatchNetworkedServerRpc(MatchResult result, string reason = "")
+    {
+        if (networkResultShown.Value) return;
+
+        networkMatchActive.Value = false;
+        networkResultShown.Value = true;
+
+        // Let clients handle the UI/pause/etc.
+        EndMatchNetworkedClientRpc(result, reason);
+    }
+
+    [ClientRpc]
+    private void EndMatchNetworkedClientRpc(MatchResult result, string reason = "")
+    {
+        // Sync local variables from network variables
+        matchActive = networkMatchActive.Value;
+        resultShown = networkResultShown.Value;
+
+        // Handle the match end locally (UI, rewards)
+        HandleLocalMatchEnd(result, reason);
+    }
+
+    // Single-player EndMatch method
+    public void EndMatch(MatchResult result, string reason = "")
     {
         if (resultShown) return;
-
-        matchActive = false;
         resultShown = true;
+        matchActive = false;
+        
+        HandleLocalMatchEnd(result, reason);
+    }
 
-        // Call MatchEndHandler to award rewards
+    private void HandleLocalMatchEnd(MatchResult result, string reason = "")
+    {
+        // This is essentially the same as the original EndMatch (single-player) but called locally by all clients
+        if (resultShown) return; // Safety check
 
+        // Mark local flags so local UI won't re-run
+        resultShown = true;
+        matchActive = false;
+
+        // Call MatchEndHandler to award rewards (if present)
         int gold = 0;
         int trophies = 0;
-        var matchEndHandler = FindFirstObjectByType<MatchEndHandler>();
+        var matchEndHandler = UnityEngine.Object.FindFirstObjectByType<MatchEndHandler>();
         if (matchEndHandler != null)
         {
-            matchEndHandler.OnMatchEnd(playerWon);
-            if (playerWon)
+            matchEndHandler.OnMatchEnd(result);
+            switch (result)
             {
-                gold = matchEndHandler.winGold;
-                trophies = matchEndHandler.winTrophies;
-            }
-            else
-            {
-                gold = matchEndHandler.loseGold;
-                trophies = 0;
+                case MatchResult.Win:
+                    gold = matchEndHandler.winGold;
+                    trophies = matchEndHandler.winTrophies;
+                    break;
+                case MatchResult.Loss:
+                    gold = matchEndHandler.loseGold;
+                    trophies = matchEndHandler.loseTrophies;
+                    break;
+                case MatchResult.Draw:
+                    gold = matchEndHandler.drawGold;
+                    trophies = matchEndHandler.drawTrophies;
+                    break;
             }
         }
         else
         {
-            // fallback to previous hardcoded values
-            gold = playerWon ? 100 : 25;
-            trophies = playerWon ? 30 : 0;
+            // fallback values
+            switch (result)
+            {
+                case MatchResult.Win:
+                    gold = 100;
+                    trophies = 30;
+                    break;
+                case MatchResult.Loss:
+                    gold = 25;
+                    trophies = -15;
+                    break;
+                case MatchResult.Draw:
+                    gold = 50;
+                    trophies = 10;
+                    break;
+            }
         }
 
         if (resultText != null)
         {
             resultText.gameObject.SetActive(true);
-            resultText.text = playerWon ? $"VICTORY\n{reason}" : $"DEFEAT\n{reason}";
+            string statusText = result == MatchResult.Win ? "VICTORY" : result == MatchResult.Draw ? "DRAW" : "DEFEAT";
+            resultText.text = $"{statusText}\n{reason}";
         }
 
         if (pauseOnEnd) Time.timeScale = 0f;
 
-        ShowRewardPanel(playerWon, gold, trophies);
+        ShowRewardPanel(result, gold, trophies);
     }
 
-    void ShowRewardPanel(bool playerWon, int gold, int trophies)
+    void ShowRewardPanel(MatchResult result, int gold, int trophies)
     {
         if (rewardPanel != null)
         {
             rewardPanel.SetActive(true);
             if (rewardText != null)
             {
-                rewardText.text = playerWon
-                    ? $"You won!\n+{gold} Gold\n+{trophies} Trophies"
-                    : $"You lost!\n+{gold} Gold";
+                string message = "";
+                switch (result)
+                {
+                    case MatchResult.Win:
+                        message = $"You won!\n+{gold} Gold\n+{trophies} Trophies";
+                        break;
+                    case MatchResult.Loss:
+                        message = $"You lost!\n+{gold} Gold\n{trophies} Trophies";
+                        break;
+                    case MatchResult.Draw:
+                        message = $"It's a draw!\n+{gold} Gold\n+{trophies} Trophies";
+                        break;
+                }
+                rewardText.text = message;
             }
             if (continueButton != null) continueButton.gameObject.SetActive(false);
             StartCoroutine(ShowContinueButtonAfterDelay(2f));
@@ -200,12 +403,33 @@ public class GameManager : MonoBehaviour
 
     public void WinMatch(string reason = "King destroyed")
     {
-        EndMatch(true, reason);
+        if (IsNetworkActive())
+        {
+            if (IsServer)
+            {
+                EndMatchNetworkedServerRpc(MatchResult.Win, reason);
+            }
+            // if client wants to request a win, you could expose a client->server RPC separately (not implemented here)
+        }
+        else
+        {
+            EndMatch(MatchResult.Win, reason);
+        }
     }
 
     public void LoseMatch(string reason = "Player King destroyed")
     {
-        EndMatch(false, reason);
+        if (IsNetworkActive())
+        {
+            if (IsServer)
+            {
+                EndMatchNetworkedServerRpc(MatchResult.Loss, reason);
+            }
+        }
+        else
+        {
+            EndMatch(MatchResult.Loss, reason);
+        }
     }
 
     public void RestartMatch()
@@ -219,7 +443,7 @@ public class GameManager : MonoBehaviour
         Time.timeScale = 1f;
     }
 
-    // Attempts to get health info from a tower/unit
+    // Attempts to get health info from a tower/unit (reflection-based fallback)
     bool TryGetHealthInfo(Transform t, out float current, out float max)
     {
         current = 0f;

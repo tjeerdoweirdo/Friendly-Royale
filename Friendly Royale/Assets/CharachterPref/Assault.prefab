@@ -179,11 +179,7 @@ MonoBehaviour:
   splashRadius: 2.5
   leftPath:
   - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
   rightPath:
-  - {fileID: 0}
-  - {fileID: 0}
   - {fileID: 0}
   path:
   - {fileID: 0}
@@ -213,7 +209,6 @@ MonoBehaviour:
   movementClip: {fileID: 8300000, guid: f29c9267059658846a3760188e61b2d9, type: 3}
   movementPlayThreshold: 0.2
   health: {fileID: 0}
-  retargetInterval: 3
 --- !u!195 &8708041557935418575
 NavMeshAgent:
   m_ObjectHideFlags: 0

@@ -674,6 +674,8 @@ MonoBehaviour:
   uiSmoothSpeed: 8
   unitNameText: {fileID: 7254015328283748228}
   unitName: Furnace
+  cardLevelText: {fileID: 8522145040406853973}
+  cardLevel: 1
 --- !u!114 &5900145979179267597
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -701,7 +703,9 @@ MonoBehaviour:
   randomizeSpawnPoint: 1
   parentSpawnedToMap: 1
   spawnEffectPrefab: {fileID: 1000012882023006, guid: 5ca4c580b3888314581688fa46fb142d, type: 3}
+  destroyEffectPrefab: {fileID: 1828176872806910, guid: 64891a0eb28db934898420d80ca07cb3, type: 3}
   spawnSound: {fileID: 8300000, guid: fdbc317ba6b47e7438de52be32aa7e20, type: 3}
+  destroySound: {fileID: 0}
   audioSource: {fileID: 4453404968057387898}
   animator: {fileID: 2942094029853352839}
   spawnAnimationClip: {fileID: 7400000, guid: c5c2840460acd0a49b599461c9c0b576, type: 2}
@@ -1133,6 +1137,26 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 4264684728091805406}
     m_Modifications:
+    - target: {fileID: 352228279881146593, guid: 03d35cb2104a8f5469ea5282af1bc1fb, type: 3}
+      propertyPath: m_text
+      value: Lv. 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 352228279881146593, guid: 03d35cb2104a8f5469ea5282af1bc1fb, type: 3}
+      propertyPath: m_fontColor.b
+      value: 0.2
+      objectReference: {fileID: 0}
+    - target: {fileID: 352228279881146593, guid: 03d35cb2104a8f5469ea5282af1bc1fb, type: 3}
+      propertyPath: m_fontColor.g
+      value: 0.85
+      objectReference: {fileID: 0}
+    - target: {fileID: 352228279881146593, guid: 03d35cb2104a8f5469ea5282af1bc1fb, type: 3}
+      propertyPath: m_fontColor.r
+      value: 0.2
+      objectReference: {fileID: 0}
+    - target: {fileID: 352228279881146593, guid: 03d35cb2104a8f5469ea5282af1bc1fb, type: 3}
+      propertyPath: m_fontColor32.rgba
+      value: 4281588019
+      objectReference: {fileID: 0}
     - target: {fileID: 721809281795936880, guid: 03d35cb2104a8f5469ea5282af1bc1fb, type: 3}
       propertyPath: m_PresetInfoIsWorld
       value: 1
@@ -1313,6 +1337,17 @@ MonoBehaviour:
 --- !u!114 &7254015328283748228 stripped
 MonoBehaviour:
   m_CorrespondingSourceObject: {fileID: 1588803665071734320, guid: 03d35cb2104a8f5469ea5282af1bc1fb, type: 3}
+  m_PrefabInstance: {fileID: 8261818340895824308}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f4688fdb7df04437aeb418b961361dc5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+--- !u!114 &8522145040406853973 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 352228279881146593, guid: 03d35cb2104a8f5469ea5282af1bc1fb, type: 3}
   m_PrefabInstance: {fileID: 8261818340895824308}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 0}

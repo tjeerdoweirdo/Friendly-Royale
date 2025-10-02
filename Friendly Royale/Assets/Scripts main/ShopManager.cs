@@ -287,6 +287,14 @@ public class ShopManager : MonoBehaviour
         PlayerProgress.Instance.SetCardLevel(slot.card.cardID, arenaID, currentLevel + 1);
         slot.upgradesBought++;
         Debug.Log($"ShopManager: Upgraded {slot.card.cardName} to level {currentLevel + 1} for {price} gold.");
+        
+        // Notify UI systems about the upgrade
+        Arena currentArena = DeckManager.Instance?.selectedArena;
+        if (currentArena != null)
+        {
+            OnCardUpgraded?.Invoke(slot.card, currentArena, currentLevel + 1);
+        }
+        
         UpdateShopSlotUI();
     }
 

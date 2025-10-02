@@ -112,8 +112,6 @@ public class Unit : MonoBehaviour
     private float lastAttackTime = 0f;
     private Transform currentTarget;
     private float targetSearchTimer = 0f;
-    private float retargetTimer = 0f;
-    public float retargetInterval = 3f;
 
     // perception runtime
     private float visualTimer = 0f;
@@ -249,14 +247,6 @@ public class Unit : MonoBehaviour
         }
 
 
-        // Retarget to the closest enemy every retargetInterval seconds
-        retargetTimer += Time.deltaTime;
-        if (retargetTimer >= retargetInterval)
-        {
-            retargetTimer = 0f;
-            RetargetToClosestEnemy();
-        }
-
         // Check for positioning issues and fix them
         CheckAndFixPositioning();
 
@@ -297,12 +287,23 @@ public class Unit : MonoBehaviour
             }
             else
             {
-                if (!CanSeeTarget(currentTarget))
+                // Check if target is still in range
+                float distanceToTarget = Vector3.Distance(transform.position, currentTarget.position);
+                if (distanceToTarget > detectionRange)
+                {
+                    // Target is out of range - forget it and resume path
+                    Debug.Log($"{gameObject.name} lost target {currentTarget.name} - out of range ({distanceToTarget:F1} > {detectionRange})");
+                    currentTarget = null;
+                    lostTimer = 0f;
+                    ResumePathOrEndTarget();
+                }
+                else if (!CanSeeTarget(currentTarget))
                 {
                     lostTimer += visualCheckInterval;
                     if (lostTimer >= lostTargetTimeout)
                     {
-                        // lost target — forget and resume path/end-target
+                        // lost line of sight — forget and resume path/end-target
+                        Debug.Log($"{gameObject.name} lost target {currentTarget.name} - no line of sight");
                         currentTarget = null;
                         lostTimer = 0f;
                         ResumePathOrEndTarget();
@@ -318,6 +319,30 @@ public class Unit : MonoBehaviour
         // If we have a current target (spotted enemy), chase until in attack range
         if (currentTarget != null)
         {
+            // Verify target is still alive before continuing to chase
+            bool targetStillValid = false;
+            var targetUnit = currentTarget.GetComponent<Unit>();
+            var targetHealth = currentTarget.GetComponent<UnitHealth>();
+            var targetTower = currentTarget.GetComponent<Tower>();
+            var targetBuilding = currentTarget.GetComponent<Health>();
+            
+            if (targetUnit != null && targetUnit.health != null && targetUnit.health.IsAlive)
+                targetStillValid = true;
+            else if (targetHealth != null && targetHealth.IsAlive)
+                targetStillValid = true;
+            else if (targetTower != null)
+                targetStillValid = true;
+            else if (targetBuilding != null && !targetBuilding.isDead)
+                targetStillValid = true;
+            
+            if (!targetStillValid)
+            {
+                Debug.Log($"{gameObject.name} target {currentTarget.name} is no longer valid - forgetting");
+                currentTarget = null;
+                ResumePathOrEndTarget();
+                return;
+            }
+            
             float dist = Vector3.Distance(transform.position, currentTarget.position);
             if (dist <= attackRange + 0.1f)
             {
@@ -585,76 +610,12 @@ public class Unit : MonoBehaviour
         {
             currentTarget = best;
             lostTimer = 0f;
+            Debug.Log($"{gameObject.name} spotted new target: {best.name} at distance {bestDist:F1}");
             PlaySpotSound();
         }
     }
 
-    // Retarget to the closest enemy, regardless of FOV/LOS, every retargetInterval seconds
-    void RetargetToClosestEnemy()
-    {
-        Unit[] allUnits = UnityEngine.Object.FindObjectsByType<Unit>(UnityEngine.FindObjectsSortMode.None);
-        Transform closest = null;
-        float closestDist = Mathf.Infinity;
 
-        // 1. Search for closest enemy unit
-        foreach (var u in allUnits)
-        {
-            if (u == this) continue;
-            if (u.faction == this.faction) continue;
-            if (u.health == null || !u.health.IsAlive) continue;
-            float dist = Vector3.Distance(transform.position, u.transform.position);
-            if (dist < closestDist)
-            {
-                closestDist = dist;
-                closest = u.transform;
-            }
-        }
-
-        // 2. If no unit found, search for closest enemy building
-        if (closest == null)
-        {
-            Building[] allBuildings = UnityEngine.Object.FindObjectsByType<Building>(UnityEngine.FindObjectsSortMode.None);
-            foreach (var b in allBuildings)
-            {
-                if (b == null || b.gameObject == this.gameObject) continue;
-                if ((int)b.faction == (int)this.faction) continue;
-                var bHealth = b.GetComponent<UnitHealth>();
-                if (bHealth != null && !bHealth.IsAlive) continue;
-                float dist = Vector3.Distance(transform.position, b.transform.position);
-                if (dist < closestDist)
-                {
-                    closestDist = dist;
-                    closest = b.transform;
-                }
-            }
-        }
-
-        // 3. If still nothing, search for closest enemy tower
-        if (closest == null)
-        {
-            Tower[] allTowers = UnityEngine.Object.FindObjectsByType<Tower>(UnityEngine.FindObjectsSortMode.None);
-            foreach (var t in allTowers)
-            {
-                var towerFaction = (t.ownerTag == "Player") ? Faction.Player : Faction.Enemy;
-                var building = t.GetComponent<Building>();
-                if (building != null)
-                    towerFaction = building.faction;
-                if (towerFaction == this.faction) continue;
-                float dist = Vector3.Distance(transform.position, t.transform.position);
-                if (dist < closestDist)
-                {
-                    closestDist = dist;
-                    closest = t.transform;
-                }
-            }
-        }
-
-        if (closest != null)
-        {
-            currentTarget = closest;
-            lostTimer = 0f;
-        }
-    }
 
     bool CanSeeTarget(Transform tgt)
     {

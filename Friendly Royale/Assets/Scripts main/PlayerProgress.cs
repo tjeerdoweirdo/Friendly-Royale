@@ -32,6 +32,7 @@ public class PlayerProgress : MonoBehaviour
 {
     public event System.Action<int> OnGoldChanged;
     public event System.Action<int> OnTrophiesChanged;
+    public event System.Action<string, string, int> OnCardLevelChanged; // cardID, arenaID, newLevel
     public static PlayerProgress Instance { get; private set; }
 
     [Header("Starting values")]
@@ -45,6 +46,14 @@ public class PlayerProgress : MonoBehaviour
     [Header("Runtime (persistent)")]
     public int gold = 0;
     public int trophies = 0;
+    
+    [Header("Trophy Road")]
+    public int currentTrophies = 0;
+    public int highestTrophies = 0;
+    public int gems = 0;
+    public List<int> claimedTrophyRewards = new List<int>();
+    public Dictionary<string, int> cardCollection = new Dictionary<string, int>();
+    public List<string> unlockedArenas = new List<string>();
 
     // persisted username (runtime)
     [Tooltip("Current player's username (persisted)")]
@@ -52,6 +61,11 @@ public class PlayerProgress : MonoBehaviour
 
     private const string KEY_GOLD = "PP_GOLD_v2";
     private const string KEY_TROPHIES = "PP_TROPHIES_v2";
+    private const string KEY_CURRENT_TROPHIES = "PP_CURRENT_TROPHIES_v1";
+    private const string KEY_HIGHEST_TROPHIES = "PP_HIGHEST_TROPHIES_v1";
+    private const string KEY_GEMS = "PP_GEMS_v1";
+    private const string KEY_CLAIMED_TROPHY_REWARDS = "PP_CLAIMED_TROPHY_REWARDS_v1";
+    private const string KEY_CARD_COLLECTION = "PP_CARD_COLLECTION_v1";
     private const string KEY_UNLOCKED_ARENAS = "PP_UNLOCKED_ARENAS_v2";
     private const string KEY_SELECTED_DECK_PREFIX = "PP_SELECTED_DECK_v2_";
     private const string KEY_CARDLEVEL_PREFIX = "PP_CARDLEVELS_v2_"; // + arenaID
@@ -81,6 +95,50 @@ public class PlayerProgress : MonoBehaviour
     {
         gold = PlayerPrefs.GetInt(KEY_GOLD, startingGold);
         trophies = PlayerPrefs.GetInt(KEY_TROPHIES, startingTrophies);
+        
+        // Load trophy road progress
+        currentTrophies = PlayerPrefs.GetInt(KEY_CURRENT_TROPHIES, startingTrophies);
+        highestTrophies = PlayerPrefs.GetInt(KEY_HIGHEST_TROPHIES, startingTrophies);
+        gems = PlayerPrefs.GetInt(KEY_GEMS, 0);
+        
+        // Load claimed trophy rewards
+        string claimedRewardsStr = PlayerPrefs.GetString(KEY_CLAIMED_TROPHY_REWARDS, "");
+        claimedTrophyRewards.Clear();
+        if (!string.IsNullOrEmpty(claimedRewardsStr))
+        {
+            string[] rewardStrs = claimedRewardsStr.Split(',');
+            foreach (string rewardStr in rewardStrs)
+            {
+                if (int.TryParse(rewardStr, out int rewardTrophy))
+                {
+                    claimedTrophyRewards.Add(rewardTrophy);
+                }
+            }
+        }
+        
+        // Load card collection
+        string cardCollectionStr = PlayerPrefs.GetString(KEY_CARD_COLLECTION, "");
+        cardCollection.Clear();
+        if (!string.IsNullOrEmpty(cardCollectionStr))
+        {
+            string[] cardEntries = cardCollectionStr.Split(';');
+            foreach (string entry in cardEntries)
+            {
+                string[] parts = entry.Split(':');
+                if (parts.Length == 2 && int.TryParse(parts[1], out int amount))
+                {
+                    cardCollection[parts[0]] = amount;
+                }
+            }
+        }
+        
+        // Load unlocked arenas
+        string unlockedArenasStr = PlayerPrefs.GetString(KEY_UNLOCKED_ARENAS, "");
+        unlockedArenas.Clear();
+        if (!string.IsNullOrEmpty(unlockedArenasStr))
+        {
+            unlockedArenas.AddRange(unlockedArenasStr.Split(',').Where(x => !string.IsNullOrEmpty(x)));
+        }
 
         // load username (fallback to startingUsername)
         username = PlayerPrefs.GetString(KEY_USERNAME, startingUsername ?? "Player");
@@ -95,10 +153,30 @@ public class PlayerProgress : MonoBehaviour
         }
     }
 
-    void SaveProgress()
+    public void SaveProgress()
     {
         PlayerPrefs.SetInt(KEY_GOLD, gold);
         PlayerPrefs.SetInt(KEY_TROPHIES, trophies);
+        
+        // Save trophy road progress
+        PlayerPrefs.SetInt(KEY_CURRENT_TROPHIES, currentTrophies);
+        PlayerPrefs.SetInt(KEY_HIGHEST_TROPHIES, highestTrophies);
+        PlayerPrefs.SetInt(KEY_GEMS, gems);
+        
+        // Save claimed trophy rewards
+        string claimedRewardsStr = string.Join(",", claimedTrophyRewards.Select(x => x.ToString()));
+        PlayerPrefs.SetString(KEY_CLAIMED_TROPHY_REWARDS, claimedRewardsStr);
+        
+        // Save card collection
+        List<string> cardEntries = new List<string>();
+        foreach (var kvp in cardCollection)
+        {
+            cardEntries.Add($"{kvp.Key}:{kvp.Value}");
+        }
+        PlayerPrefs.SetString(KEY_CARD_COLLECTION, string.Join(";", cardEntries));
+        
+        // Save unlocked arenas
+        PlayerPrefs.SetString(KEY_UNLOCKED_ARENAS, string.Join(",", unlockedArenas));
 
         // save username as well
         if (username == null) username = "";
@@ -232,6 +310,9 @@ public class PlayerProgress : MonoBehaviour
         }
         else e.level = level;
         SaveCardLevelCollection(arenaID, col);
+        
+        // Notify listeners that card level changed
+        OnCardLevelChanged?.Invoke(cardID, arenaID, level);
     }
 
     public void IncreaseCardLevel(string cardID, string arenaID, int by = 1)

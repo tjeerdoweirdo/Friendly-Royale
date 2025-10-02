@@ -133,6 +133,8 @@ MonoBehaviour:
   uiSmoothSpeed: 8
   unitNameText: {fileID: 4566876380623096680}
   unitName: Mortar
+  cardLevelText: {fileID: 3282843331250394553}
+  cardLevel: 1
 --- !u!114 &2106065655808170397
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -384,6 +386,26 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 269648291772987469}
     m_Modifications:
+    - target: {fileID: 352228279881146593, guid: 03d35cb2104a8f5469ea5282af1bc1fb, type: 3}
+      propertyPath: m_text
+      value: Lv. 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 352228279881146593, guid: 03d35cb2104a8f5469ea5282af1bc1fb, type: 3}
+      propertyPath: m_fontColor.b
+      value: 0.2
+      objectReference: {fileID: 0}
+    - target: {fileID: 352228279881146593, guid: 03d35cb2104a8f5469ea5282af1bc1fb, type: 3}
+      propertyPath: m_fontColor.g
+      value: 0.85
+      objectReference: {fileID: 0}
+    - target: {fileID: 352228279881146593, guid: 03d35cb2104a8f5469ea5282af1bc1fb, type: 3}
+      propertyPath: m_fontColor.r
+      value: 0.2
+      objectReference: {fileID: 0}
+    - target: {fileID: 352228279881146593, guid: 03d35cb2104a8f5469ea5282af1bc1fb, type: 3}
+      propertyPath: m_fontColor32.rgba
+      value: 4281588019
+      objectReference: {fileID: 0}
     - target: {fileID: 721809281795936880, guid: 03d35cb2104a8f5469ea5282af1bc1fb, type: 3}
       propertyPath: m_PresetInfoIsWorld
       value: 1
@@ -565,6 +587,17 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 67db9e8f0e2ae9c40bc1e2b64352a6b4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+--- !u!114 &3282843331250394553 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 352228279881146593, guid: 03d35cb2104a8f5469ea5282af1bc1fb, type: 3}
+  m_PrefabInstance: {fileID: 2984863306153014616}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f4688fdb7df04437aeb418b961361dc5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
 --- !u!114 &4566876380623096680 stripped

@@ -49,6 +49,12 @@ public class MegaKnightJump : MonoBehaviour
             audioSource = gameObject.AddComponent<AudioSource>();
     }
 
+    void OnDestroy()
+    {
+        // Clean up landing indicator when Mega Knight is destroyed/killed
+        HideLandingIndicator();
+    }
+
     void Update()
     {
         if (isJumping)

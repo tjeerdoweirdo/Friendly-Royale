@@ -13,6 +13,9 @@ public class MatchEndHandler : MonoBehaviour
     public int winGold = 100;
     public int winTrophies = 30;
     public int loseGold = 25;
+    public int loseTrophies = -15;
+    public int drawGold = 50;
+    public int drawTrophies = 10;
 
     private PlayerProgress playerProgress;
 
@@ -35,8 +38,8 @@ public class MatchEndHandler : MonoBehaviour
     /// <summary>
     /// Call this when the match ends.
     /// </summary>
-    /// <param name="playerWon">True if player won, false if lost.</param>
-    public void OnMatchEnd(bool playerWon)
+    /// <param name="result">The match result (Win, Loss, or Draw).</param>
+    public void OnMatchEnd(MatchResult result)
     {
         if (playerProgress == null)
         {
@@ -47,14 +50,21 @@ public class MatchEndHandler : MonoBehaviour
                 return;
             }
         }
-        if (playerWon)
+        
+        switch (result)
         {
-            playerProgress.AddTrophies(winTrophies);
-            playerProgress.AddGold(winGold);
-        }
-        else
-        {
-            playerProgress.AddGold(loseGold);
+            case MatchResult.Win:
+                playerProgress.AddTrophies(winTrophies);
+                playerProgress.AddGold(winGold);
+                break;
+            case MatchResult.Loss:
+                playerProgress.AddTrophies(loseTrophies); // Subtract trophies on loss
+                playerProgress.AddGold(loseGold);
+                break;
+            case MatchResult.Draw:
+                playerProgress.AddTrophies(drawTrophies);
+                playerProgress.AddGold(drawGold);
+                break;
         }
     }
 }

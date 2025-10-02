@@ -19,6 +19,16 @@ public class HandUI : MonoBehaviour
     // Reference to the CardSpawner (drag in inspector or it will auto-find)
     [Header("Spawner (auto-find if empty)")]
     public CardSpawner cardSpawner;
+    
+    [Header("Placement Mode")]
+    [Tooltip("CardPlacementSystem for click-to-place functionality")]
+    public CardPlacementSystem placementSystem;
+    
+    // Placement mode state
+    private bool isInPlacementMode = false;
+    private Card selectedCard = null;
+    private int selectedCardIndex = -1;
+    private Camera mainCamera;
 
     private bool subscribedToDeck = false;
     private bool subscribedToCoin = false;
@@ -33,7 +43,22 @@ public class HandUI : MonoBehaviour
         {
             cardSpawner = FindFirstObjectByType<CardSpawner>();
             if (cardSpawner == null)
-                Debug.LogWarning("[HandUI] No CardSpawner found in scene. Spawn choice UI will not appear.");
+                Debug.LogWarning("[HandUI] No CardSpawner found in scene.");
+        }
+        
+        // try to auto-find CardPlacementSystem if not assigned
+        if (placementSystem == null)
+        {
+            placementSystem = FindFirstObjectByType<CardPlacementSystem>();
+            if (placementSystem == null)
+                Debug.LogWarning("[HandUI] No CardPlacementSystem found in scene. Click-to-place will not work.");
+        }
+        
+        // get main camera reference
+        mainCamera = Camera.main;
+        if (mainCamera == null)
+        {
+            mainCamera = FindFirstObjectByType<Camera>();
         }
     }
 
@@ -77,6 +102,15 @@ public class HandUI : MonoBehaviour
     {
         // extra safety: refresh when component starts
         RefreshHand();
+    }
+    
+    void Update()
+    {
+        // Handle placement mode input
+        if (isInPlacementMode)
+        {
+            HandlePlacementModeInput();
+        }
     }
 
     void OnSceneLoaded(Scene scene, LoadSceneMode mode)
@@ -220,8 +254,20 @@ public class HandUI : MonoBehaviour
                 // Set interactable state: allow play if you have enough coins for this card
                 localBtn.interactable = canAfford;
 
+                // Set up DraggableCard component for drag-and-drop functionality
+                DraggableCard draggableCard = localBtn.GetComponent<DraggableCard>();
+                if (draggableCard == null)
+                {
+                    draggableCard = localBtn.gameObject.AddComponent<DraggableCard>();
+                }
+                
+                // Initialize the draggable card with current data
+                draggableCard.Initialize(c, localIndex, this);
+                
                 // Remove old listeners and add the correct one with captured index
                 localBtn.onClick.RemoveAllListeners();
+                // Note: DraggableCard will handle clicks through its drag system
+                // We keep this as fallback for non-draggable interactions
                 localBtn.onClick.AddListener(() => OnCardClicked(localIndex));
 
                 // Remove or add EventTrigger based on affordability
@@ -266,47 +312,256 @@ public class HandUI : MonoBehaviour
                 btn.gameObject.SetActive(false);
                 var trigger = btn.GetComponent<UnityEngine.EventSystems.EventTrigger>();
                 if (trigger != null) trigger.triggers = new List<UnityEngine.EventSystems.EventTrigger.Entry>();
+                
+                // Remove DraggableCard component if present
+                DraggableCard draggableCard = btn.GetComponent<DraggableCard>();
+                if (draggableCard != null)
+                {
+                    DestroyImmediate(draggableCard);
+                }
             }
         }
     }
 
-    void OnCardClicked(int slotIndex)
+    /// <summary>
+    /// Public method for handling card clicks - enters placement mode
+    /// </summary>
+    public void OnCardClicked(int slotIndex)
     {
         if (DeckManager.Instance == null) return;
         if (slotIndex >= DeckManager.Instance.hand.Count) return;
 
         Card c = DeckManager.Instance.hand[slotIndex];
+        Debug.Log($"[HandUI] OnCardClicked: Card '{c.cardName}' - entering placement mode");
+        
+        // Check if systems are available
         if (CoinSystem.Instance == null)
         {
             Debug.LogWarning("CoinSystem.Instance is null. Make sure a CoinSystem exists in the scene.");
             return;
         }
+        
+        if (placementSystem == null)
+        {
+            Debug.LogWarning("[HandUI] No CardPlacementSystem found. Falling back to legacy spawn.");
+            OnCardClickedLegacy(slotIndex);
+            return;
+        }
 
-        // Check cost before proceeding
+        // Check cost before entering placement mode
         if (CoinSystem.Instance.currentCoins < c.coinCost)
         {
             Debug.Log("[HandUI] Not enough coins to play card.");
             ShowElixirError();
             return;
         }
+        
+        // Enter placement mode
+        EnterPlacementMode(c, slotIndex);
+    }
 
-        // Special building spawn logic
-        if (c.cardType == CardType.Building && cardSpawner != null)
+    /// <summary>
+    /// Enter placement mode for the selected card
+    /// </summary>
+    private void EnterPlacementMode(Card card, int cardIndex)
+    {
+        if (isInPlacementMode)
         {
-            int freeSpot = -1;
-            for (int i = 0; i < cardSpawner.specialBuildingOccupants.Length; i++)
+            ExitPlacementMode(); // Exit current placement mode first
+        }
+        
+        isInPlacementMode = true;
+        selectedCard = card;
+        selectedCardIndex = cardIndex;
+        
+        // Start placement system
+        if (placementSystem != null)
+        {
+            placementSystem.BeginCardPlacement(card);
+        }
+        
+        // Visual feedback - highlight the selected card
+        HighlightSelectedCard(cardIndex, true);
+        
+        Debug.Log($"[HandUI] Entered placement mode for {card.cardName}. Click on battlefield to place.");
+    }
+    
+    /// <summary>
+    /// Exit placement mode
+    /// </summary>
+    private void ExitPlacementMode()
+    {
+        if (!isInPlacementMode) return;
+        
+        // End placement system
+        if (placementSystem != null)
+        {
+            placementSystem.EndCardPlacement();
+        }
+        
+        // Remove visual feedback
+        if (selectedCardIndex >= 0)
+        {
+            HighlightSelectedCard(selectedCardIndex, false);
+        }
+        
+        isInPlacementMode = false;
+        selectedCard = null;
+        selectedCardIndex = -1;
+        
+        Debug.Log("[HandUI] Exited placement mode.");
+    }
+    
+    /// <summary>
+    /// Handle input during placement mode
+    /// </summary>
+    private void HandlePlacementModeInput()
+    {
+        if (!isInPlacementMode || selectedCard == null || mainCamera == null) return;
+        
+        // Handle mouse/touch input
+        if (Input.GetMouseButtonDown(0))
+        {
+            Vector2 screenPos = Input.mousePosition;
+            Ray ray = mainCamera.ScreenPointToRay(screenPos);
+            
+            // Check if we clicked on UI (ignore placement if so)
+            if (UnityEngine.EventSystems.EventSystem.current != null && 
+                UnityEngine.EventSystems.EventSystem.current.IsPointerOverGameObject())
             {
-                if (cardSpawner.specialBuildingOccupants[i] == null)
+                return; // Clicked on UI, ignore
+            }
+            
+            // Try to place the card
+            Vector3 worldPos;
+            if (placementSystem != null && placementSystem.TryGetPlacementPosition(ray, selectedCard, out worldPos))
+            {
+                PlaceSelectedCard(worldPos);
+            }
+            else
+            {
+                Debug.Log("[HandUI] Invalid placement position.");
+                // Could add audio/visual feedback here for invalid placement
+            }
+        }
+        
+        // Handle cancellation (right click or escape)
+        if (Input.GetMouseButtonDown(1) || Input.GetKeyDown(KeyCode.Escape))
+        {
+            ExitPlacementMode();
+        }
+        
+        // Update placement preview
+        if (placementSystem != null)
+        {
+            Vector2 mousePos = Input.mousePosition;
+            Ray ray = mainCamera.ScreenPointToRay(mousePos);
+            Vector3 worldPos;
+            bool isValid = placementSystem.TryGetPlacementPosition(ray, selectedCard, out worldPos);
+            placementSystem.UpdatePlacementPreview(worldPos, isValid);
+        }
+    }
+    
+    /// <summary>
+    /// Place the selected card at the specified world position
+    /// </summary>
+    private void PlaceSelectedCard(Vector3 worldPosition)
+    {
+        if (!isInPlacementMode || selectedCard == null) return;
+        
+        // Check and spend coins
+        if (CoinSystem.Instance != null && CoinSystem.Instance.currentCoins >= selectedCard.coinCost)
+        {
+            bool paid = CoinSystem.Instance.SpendCoins(selectedCard.coinCost);
+            if (paid)
+            {
+                // Play the card through DeckManager
+                if (DeckManager.Instance != null)
                 {
-                    freeSpot = i;
-                    break;
+                    DeckManager.Instance.PlayCard(selectedCard);
+                }
+                
+                // Spawn the unit/building at the target position
+                if (cardSpawner != null)
+                {
+                    StartCoroutine(cardSpawner.SpawnUnitAtPosition(selectedCard, worldPosition, Unit.Faction.Player));
+                }
+                else
+                {
+                    Debug.LogWarning("[HandUI] No CardSpawner found for placement!");
+                }
+                
+                Debug.Log($"[HandUI] Placed card {selectedCard.cardName} at {worldPosition}");
+                
+                // Exit placement mode
+                ExitPlacementMode();
+                
+                // Refresh hand UI
+                RefreshHand();
+            }
+            else
+            {
+                Debug.LogWarning("[HandUI] Failed to spend coins for card placement.");
+                ExitPlacementMode();
+            }
+        }
+        else
+        {
+            Debug.LogWarning("[HandUI] Not enough coins for card placement.");
+            ShowElixirError();
+            ExitPlacementMode();
+        }
+    }
+    
+    /// <summary>
+    /// Highlight or unhighlight a card slot during placement mode
+    /// </summary>
+    private void HighlightSelectedCard(int cardIndex, bool highlight)
+    {
+        if (cardIndex < 0 || cardIndex >= cardSlots.Count) return;
+        
+        Button cardButton = cardSlots[cardIndex];
+        if (cardButton == null) return;
+        
+        if (highlight)
+        {
+            // Add visual feedback - scale up and change color
+            cardButton.transform.localScale = Vector3.one * 1.15f;
+            
+            // Add a subtle color tint
+            if (cardIcons != null && cardIndex < cardIcons.Count)
+            {
+                Image icon = cardIcons[cardIndex];
+                if (icon != null)
+                {
+                    Color originalColor = icon.color;
+                    icon.color = new Color(originalColor.r, originalColor.g, originalColor.b, 1f) * 1.2f;
                 }
             }
-            if (freeSpot == -1)
-            {
-                Debug.Log("Cannot play: Both special building spots are occupied. No coins spent.");
-                return;
-            }
+        }
+        else
+        {
+            // Remove visual feedback - restore normal appearance
+            // RefreshHand will restore the proper scale and colors
+            RefreshHand();
+        }
+    }
+    
+    /// <summary>
+    /// Legacy card click method for fallback when placement system is not available
+    /// </summary>
+    private void OnCardClickedLegacy(int slotIndex)
+    {
+        if (DeckManager.Instance == null) return;
+        if (slotIndex >= DeckManager.Instance.hand.Count) return;
+
+        Card c = DeckManager.Instance.hand[slotIndex];
+        
+        // Check cost before proceeding
+        if (CoinSystem.Instance.currentCoins < c.coinCost)
+        {
+            ShowElixirError();
+            return;
         }
 
         // Spend coins and play the card
@@ -315,21 +570,20 @@ public class HandUI : MonoBehaviour
 
         DeckManager.Instance.PlayCard(c);
 
-        // Show spawn choice
+        // Legacy click-to-play: spawn on left side
         if (cardSpawner != null)
         {
-            cardSpawner.ShowSpawnChoice(c, Unit.Faction.Player);
+            cardSpawner.SpawnOnSideImmediate(true, c, Unit.Faction.Player);
         }
         else
         {
-            Vector3 world = (slotIndex % 2 == 0) ? new Vector3(-2f, 0f, 0f) : new Vector3(2f, 0f, 0f);
+            Vector3 world = new Vector3(-2f, 0f, 0f);
             StartCoroutine(FindSpawnerAndSpawnFallback(c, world));
         }
 
-        // Refresh UI immediately so this slot updates
         RefreshHand();
     }
-
+    
     // Simple error notification for not enough elixir/coins
     void ShowElixirError()
     {
@@ -345,7 +599,7 @@ public class HandUI : MonoBehaviour
         CardSpawner sp = FindFirstObjectByType<CardSpawner>();
         if (sp != null)
         {
-            StartCoroutine(sp.SpawnUnitFromCard(c, worldPos, Unit.Faction.Player));
+            StartCoroutine(sp.SpawnUnitAtPosition(c, worldPos, Unit.Faction.Player));
         }
         else
         {

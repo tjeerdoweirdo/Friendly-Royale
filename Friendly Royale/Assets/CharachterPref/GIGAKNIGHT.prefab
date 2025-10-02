@@ -270,6 +270,7 @@ GameObject:
   - component: {fileID: 814876902052462085}
   - component: {fileID: 7925436487557039713}
   - component: {fileID: 5705047946193683371}
+  - component: {fileID: -5796633739969187396}
   m_Layer: 0
   m_Name: GIGAKNIGHT
   m_TagString: Untagged
@@ -435,22 +436,16 @@ MonoBehaviour:
   splashRadius: 2.5
   leftPath:
   - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
   rightPath:
   - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
   path:
-  - {fileID: 0}
-  - {fileID: 0}
   - {fileID: 0}
   pathSwitchCheckInterval: 2
   pathLookaheadDistance: 5
   enemyDetectionRadius: 4
   maxEnemiesBeforeSwitch: 2
   endTargetTower: {fileID: 0}
-  agent: {fileID: 0}
+  agent: {fileID: -5796633739969187396}
   addAgentIfMissing: 1
   overrideAgentSettings: 1
   agentTypeID: 0
@@ -469,7 +464,6 @@ MonoBehaviour:
   movementClip: {fileID: 8300000, guid: 4b073e83b168f4e41b11e4b9562ccaa2, type: 3}
   movementPlayThreshold: 0.2
   health: {fileID: 0}
-  retargetInterval: 3
 --- !u!114 &5705047946193683371
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -496,6 +490,28 @@ MonoBehaviour:
   jumpSound: {fileID: 8300000, guid: b9c89db81f7025d4a96dfcbc323c62e5, type: 3}
   landingSound: {fileID: 8300000, guid: 1fd31868d68903d4f9e2c4a3b7ef98f3, type: 3}
   meleeSound: {fileID: 8300000, guid: 0560f04ee7c91c1409d8078570b348ce, type: 3}
+--- !u!195 &-5796633739969187396
+NavMeshAgent:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5746635003594701443}
+  m_Enabled: 1
+  m_AgentTypeID: 0
+  m_Radius: 0.49999997
+  m_Speed: 3.5
+  m_Acceleration: 8
+  avoidancePriority: 50
+  m_AngularSpeed: 120
+  m_StoppingDistance: 0
+  m_AutoTraverseOffMeshLink: 1
+  m_AutoBraking: 1
+  m_AutoRepath: 1
+  m_Height: 1.9999999
+  m_BaseOffset: 0.99999994
+  m_WalkableMask: 4294967295
+  m_ObstacleAvoidanceType: 4
 --- !u!1 &5844132011463783393
 GameObject:
   m_ObjectHideFlags: 0

@@ -95,11 +95,16 @@ public class DeckManager : MonoBehaviour
             if (arenaInScene != null)
             {
                 selectedArena = arenaInScene;
+                Debug.Log($"[DeckManager] Found Arena in scene: '{arenaInScene.arenaID}' ({arenaInScene.displayName})");
             }
             else
             {
-                Debug.LogWarning("[DeckManager] No Arena found in scene.");
+                Debug.LogWarning("[DeckManager] No Arena found in scene - card levels may use default arena");
             }
+        }
+        else
+        {
+            Debug.Log($"[DeckManager] Using existing selectedArena: '{selectedArena.arenaID}' ({selectedArena.displayName})");
         }
     }
 
@@ -212,6 +217,17 @@ public class DeckManager : MonoBehaviour
         // Only add non-null cards to the draw pile
         deck.AddRange(selectedCards.Where(c => c != null));
         selectedArena = arena;
+        
+        Debug.Log($"[DeckManager] SetStartingDeck: Selected arena set to '{arena.arenaID}' ({arena.displayName})");
+        Debug.Log($"[DeckManager] SetStartingDeck: Deck contains {deck.Count} cards");
+        
+        // Also save the arena selection persistently in case it's needed across scene loads
+        if (PlayerProgress.Instance != null)
+        {
+            // You could add a method to save the last selected arena if needed
+            Debug.Log($"[DeckManager] PlayerProgress available for arena '{arena.arenaID}'");
+        }
+        
         Shuffle(deck);
     }
 

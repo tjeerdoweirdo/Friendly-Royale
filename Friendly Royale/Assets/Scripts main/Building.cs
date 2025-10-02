@@ -27,7 +27,9 @@ public class Building : MonoBehaviour
     public bool parentSpawnedToMap = false;      // whether spawned units get parented to spawner (usually false)
     [Header("FX & Audio")]
     public GameObject spawnEffectPrefab;
+    public GameObject destroyEffectPrefab;
     public AudioClip spawnSound;
+    public AudioClip destroySound;
     public AudioSource audioSource;
     [Header("Animation")]
     public Animator animator;
@@ -37,6 +39,7 @@ public class Building : MonoBehaviour
 
     // runtime
     private readonly System.Collections.Generic.List<GameObject> activeSpawns = new System.Collections.Generic.List<GameObject>();
+    private readonly System.Collections.Generic.List<GameObject> activeEffects = new System.Collections.Generic.List<GameObject>();
     private int roundRobinIndex = 0;
     private int totalSpawned = 0;
     private Coroutine spawnRoutine;
@@ -82,12 +85,15 @@ public class Building : MonoBehaviour
 
     void OnEnable()
     {
-        // Ensure building has a UnitHealth for targeting by units
+        // Get components
+        health = GetComponent<Health>();
         unitHealth = GetComponent<UnitHealth>();
+        
+        // Ensure building has a UnitHealth for targeting by units
         if (unitHealth == null)
             unitHealth = gameObject.AddComponent<UnitHealth>();
-        // Optionally sync maxHealth from Health if present
-        health = GetComponent<Health>();
+            
+        // Sync health values from Health to UnitHealth
         if (health != null && unitHealth != null)
         {
             unitHealth.maxHealth = Mathf.RoundToInt(health.maxHealth);
@@ -98,8 +104,10 @@ public class Building : MonoBehaviour
 
     void Start()
     {
-        health = GetComponent<Health>();
-        unitHealth = GetComponent<UnitHealth>();
+        // Components should already be retrieved in OnEnable
+        if (health == null) health = GetComponent<Health>();
+        if (unitHealth == null) unitHealth = GetComponent<UnitHealth>();
+        
         if (lifetime < 0f) lifetime = 0f; // Prevent negative lifetime
         if (lifetime > 0f)
             lifeTimer = lifetime;
@@ -116,11 +124,20 @@ public class Building : MonoBehaviour
             {
                 if (health.maxHealth <= 0f) health.maxHealth = 100f;
                 if (health.currentHealth <= 0f) health.currentHealth = health.maxHealth;
+                // Sync to UnitHealth
+                if (unitHealth != null)
+                {
+                    unitHealth.maxHealth = Mathf.RoundToInt(health.maxHealth);
+                    unitHealth.currentHealth = Mathf.RoundToInt(health.currentHealth);
+                }
             }
             // Set lifetime to a reasonable default if not set (0 = infinite)
             if (this.lifetime < 0f) this.lifetime = 0f;
             spawnRoutine = StartCoroutine(SpawnLoop());
         }
+        
+        // Final sync to ensure both components are in sync
+        SyncHealthComponents();
     }
 
     void CalculateDecay()
@@ -129,23 +146,45 @@ public class Building : MonoBehaviour
         hpDecayPerSecond = 0f;
     }
 
+    void SyncHealthComponents()
+    {
+        // Keep Health and UnitHealth synchronized
+        if (health != null && unitHealth != null)
+        {
+            // If UnitHealth has taken damage, sync it to Health
+            if (unitHealth.currentHealth != Mathf.RoundToInt(health.currentHealth))
+            {
+                health.currentHealth = unitHealth.currentHealth;
+                if (health.currentHealth <= 0f)
+                {
+                    health.currentHealth = 0f;
+                    // The Health component will handle destruction via its Die() method
+                }
+            }
+            // If Health has taken damage, sync it to UnitHealth
+            else if (Mathf.RoundToInt(health.currentHealth) != unitHealth.currentHealth)
+            {
+                unitHealth.currentHealth = Mathf.RoundToInt(health.currentHealth);
+                if (unitHealth.currentHealth <= 0)
+                {
+                    unitHealth.currentHealth = 0;
+                }
+            }
+        }
+    }
+
     protected virtual void Update()
     {
+        // Sync health between Health and UnitHealth components
+        SyncHealthComponents();
+
         // Lifetime logic
         if (lifetime > 0f)
         {
             lifeTimer -= Time.deltaTime;
             if (lifeTimer <= 0f)
             {
-                // Destroy any extra objects on despawn
-                if (destroyOnDespawn != null)
-                {
-                    foreach (var go in destroyOnDespawn)
-                    {
-                        if (go != null)
-                            Destroy(go);
-                    }
-                }
+                DestroyAllEffects();
                 Destroy(gameObject);
                 return;
             }
@@ -157,15 +196,7 @@ public class Building : MonoBehaviour
         bool dead = (health != null && health.isDead) || (unitHealth != null && !unitHealth.IsAlive);
         if (dead)
         {
-            // Destroy any extra objects on despawn
-            if (destroyOnDespawn != null)
-            {
-                foreach (var go in destroyOnDespawn)
-                {
-                    if (go != null)
-                        Destroy(go);
-                }
-            }
+            DestroyAllEffects();
             Destroy(gameObject);
             return;
         }
@@ -178,6 +209,12 @@ public class Building : MonoBehaviour
             {
                 if (activeSpawns[i] == null)
                     activeSpawns.RemoveAt(i);
+            }
+            // Remove destroyed effects from tracking
+            for (int i = activeEffects.Count - 1; i >= 0; i--)
+            {
+                if (activeEffects[i] == null)
+                    activeEffects.RemoveAt(i);
             }
             // Update UI (no lifetime shown, handled by Building)
             if (spawnTextUI != null)
@@ -258,7 +295,11 @@ public class Building : MonoBehaviour
                 }
                 activeSpawns.Add(spawned);
                 totalSpawned++;
-                if (spawnEffectPrefab != null) Instantiate(spawnEffectPrefab, pos, rot);
+                if (spawnEffectPrefab != null) 
+                {
+                    GameObject effect = Instantiate(spawnEffectPrefab, pos, rot);
+                    activeEffects.Add(effect);
+                }
                 if (spawnSound != null && audioSource != null) audioSource.PlayOneShot(spawnSound);
                 if (animator != null && spawnAnimationClip != null) animator.Play(spawnAnimationClip.name);
                 if (expireBySpawnCount && maxTotalSpawns > 0 && totalSpawned >= maxTotalSpawns)
@@ -303,7 +344,72 @@ public class Building : MonoBehaviour
     {
         StopAllCoroutines();
         if (this != null && gameObject != null)
+        {
+            DestroyAllEffects();
             Destroy(gameObject);
+        }
+    }
+
+    private void DestroyAllEffects()
+    {
+        // Play destroy effect and sound before cleanup
+        PlayDestroyEffect();
+        
+        // Destroy any extra objects on despawn
+        if (destroyOnDespawn != null)
+        {
+            foreach (var go in destroyOnDespawn)
+            {
+                if (go != null)
+                    Destroy(go);
+            }
+        }
+        
+        // Destroy all active effects
+        foreach (var effect in activeEffects)
+        {
+            if (effect != null)
+                Destroy(effect);
+        }
+        activeEffects.Clear();
+        
+        // Destroy any active spawned units (optional - you might want to keep them alive)
+        // Uncomment the lines below if you want spawned units to be destroyed when building dies
+        /*
+        foreach (var spawn in activeSpawns)
+        {
+            if (spawn != null)
+                Destroy(spawn);
+        }
+        activeSpawns.Clear();
+        */
+    }
+
+    private void PlayDestroyEffect()
+    {
+        // Play destroy effect
+        if (destroyEffectPrefab != null)
+        {
+            GameObject effect = Instantiate(destroyEffectPrefab, transform.position, transform.rotation);
+            // Don't parent the destroy effect to this building since it's about to be destroyed
+            effect.transform.SetParent(null);
+        }
+        
+        // Play destroy sound
+        if (destroySound != null && audioSource != null)
+        {
+            // Create a temporary audio source for the destroy sound since this object is being destroyed
+            GameObject tempAudioObject = new GameObject("TempDestroyAudio");
+            tempAudioObject.transform.position = transform.position;
+            AudioSource tempAudioSource = tempAudioObject.AddComponent<AudioSource>();
+            tempAudioSource.clip = destroySound;
+            tempAudioSource.volume = audioSource.volume;
+            tempAudioSource.pitch = audioSource.pitch;
+            tempAudioSource.Play();
+            
+            // Destroy the temporary audio object after the sound finishes
+            Destroy(tempAudioObject, destroySound.length + 0.1f);
+        }
     }
 
     private void OnDestroy()

@@ -14,6 +14,7 @@ GameObject:
   - component: {fileID: 675048907643982350}
   - component: {fileID: 1634997993930752329}
   - component: {fileID: 4005429327953556190}
+  - component: {fileID: 1744273561311863002}
   m_Layer: 0
   m_Name: Smartman
   m_TagString: Untagged
@@ -176,22 +177,16 @@ MonoBehaviour:
   splashRadius: 2.5
   leftPath:
   - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
   rightPath:
   - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
   path:
-  - {fileID: 0}
-  - {fileID: 0}
   - {fileID: 0}
   pathSwitchCheckInterval: 2
   pathLookaheadDistance: 5
   enemyDetectionRadius: 4
   maxEnemiesBeforeSwitch: 2
   endTargetTower: {fileID: 0}
-  agent: {fileID: 0}
+  agent: {fileID: 1744273561311863002}
   addAgentIfMissing: 1
   overrideAgentSettings: 1
   agentTypeID: 0
@@ -210,7 +205,28 @@ MonoBehaviour:
   movementClip: {fileID: 8300000, guid: 847afcada2457414686e5ee2885a978f, type: 3}
   movementPlayThreshold: 5
   health: {fileID: 0}
-  retargetInterval: 3
+--- !u!195 &1744273561311863002
+NavMeshAgent:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2847029890258799918}
+  m_Enabled: 1
+  m_AgentTypeID: 0
+  m_Radius: 0.5
+  m_Speed: 3.5
+  m_Acceleration: 8
+  avoidancePriority: 50
+  m_AngularSpeed: 120
+  m_StoppingDistance: 0
+  m_AutoTraverseOffMeshLink: 1
+  m_AutoBraking: 1
+  m_AutoRepath: 1
+  m_Height: 2
+  m_BaseOffset: 1
+  m_WalkableMask: 4294967295
+  m_ObstacleAvoidanceType: 4
 --- !u!1 &5513676574408004965
 GameObject:
   m_ObjectHideFlags: 0
