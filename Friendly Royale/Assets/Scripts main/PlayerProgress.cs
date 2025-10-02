@@ -1,6 +1,7 @@
 using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
+using Unity.Netcode;
 
 [System.Serializable]
 public class CardLevelEntry
@@ -28,8 +29,12 @@ public class CardShardCollection
     public List<CardShardEntry> entries = new List<CardShardEntry>();
 }
 
-public class PlayerProgress : MonoBehaviour
+public class PlayerProgress : NetworkBehaviour
 {
+    [Header("Network Configuration")]
+    [Tooltip("Enable networking for this component. When disabled, works as single-player component.")]
+    public bool enableNetworking = false;
+    
     public event System.Action<int> OnGoldChanged;
     public event System.Action<int> OnTrophiesChanged;
     public event System.Action<string, string, int> OnCardLevelChanged; // cardID, arenaID, newLevel
@@ -54,6 +59,22 @@ public class PlayerProgress : MonoBehaviour
     public List<int> claimedTrophyRewards = new List<int>();
     public Dictionary<string, int> cardCollection = new Dictionary<string, int>();
     public List<string> unlockedArenas = new List<string>();
+    
+    [Header("Network Variables (when networking enabled)")]
+    private NetworkVariable<int> networkGold = new NetworkVariable<int>(500);
+    private NetworkVariable<int> networkTrophies = new NetworkVariable<int>(0);
+    private NetworkVariable<int> networkCurrentTrophies = new NetworkVariable<int>(0);
+    private NetworkVariable<int> networkHighestTrophies = new NetworkVariable<int>(0);
+    private NetworkVariable<int> networkGems = new NetworkVariable<int>(0);
+    private NetworkVariable<int> networkLevel = new NetworkVariable<int>(1);
+    private NetworkVariable<int> networkExperience = new NetworkVariable<int>(0);
+    private NetworkVariable<int> networkWins = new NetworkVariable<int>(0);
+    private NetworkVariable<int> networkLosses = new NetworkVariable<int>(0);
+    private NetworkVariable<int> networkWinStreak = new NetworkVariable<int>(0);
+    private NetworkVariable<int> networkBestWinStreak = new NetworkVariable<int>(0);
+    
+    // Network player tracking
+    private static Dictionary<ulong, PlayerProgress> networkPlayerDict = new Dictionary<ulong, PlayerProgress>();
 
     // persisted username (runtime)
     [Tooltip("Current player's username (persisted)")]
@@ -82,12 +103,138 @@ public class PlayerProgress : MonoBehaviour
         DontDestroyOnLoad(gameObject);
         LoadProgress();
     }
-
-
+    
+    public override void OnNetworkSpawn()
+    {
+        if (!enableNetworking) return;
+        
+        // Register this player's progress
+        networkPlayerDict[OwnerClientId] = this;
+        
+        // Subscribe to network variable changes
+        networkGold.OnValueChanged += OnNetworkGoldChanged;
+        networkTrophies.OnValueChanged += OnNetworkTrophiesChanged;
+        networkCurrentTrophies.OnValueChanged += OnNetworkCurrentTrophiesChanged;
+        networkHighestTrophies.OnValueChanged += OnNetworkHighestTrophiesChanged;
+        networkGems.OnValueChanged += OnNetworkGemsChanged;
+        
+        // If server, initialize network values from local values
+        if (IsServer)
+        {
+            SyncLocalToNetwork();
+        }
+        // If client, sync network values to local
+        else if (IsOwner)
+        {
+            SyncNetworkToLocal();
+        }
+    }
+    
+    public override void OnNetworkDespawn()
+    {
+        if (!enableNetworking) return;
+        
+        // Unsubscribe from network variable changes
+        networkGold.OnValueChanged -= OnNetworkGoldChanged;
+        networkTrophies.OnValueChanged -= OnNetworkTrophiesChanged;
+        networkCurrentTrophies.OnValueChanged -= OnNetworkCurrentTrophiesChanged;
+        networkHighestTrophies.OnValueChanged -= OnNetworkHighestTrophiesChanged;
+        networkGems.OnValueChanged -= OnNetworkGemsChanged;
+        
+        // Remove from dictionary
+        networkPlayerDict.Remove(OwnerClientId);
+    }
+    
+    #region Network Synchronization Methods
+    private void SyncLocalToNetwork()
+    {
+        if (!IsServer) return;
+        
+        networkGold.Value = gold;
+        networkTrophies.Value = trophies;
+        networkCurrentTrophies.Value = currentTrophies;
+        networkHighestTrophies.Value = highestTrophies;
+        networkGems.Value = gems;
+    }
+    
+    private void SyncNetworkToLocal()
+    {
+        if (!IsOwner) return;
+        
+        gold = networkGold.Value;
+        trophies = networkTrophies.Value;
+        currentTrophies = networkCurrentTrophies.Value;
+        highestTrophies = networkHighestTrophies.Value;
+        gems = networkGems.Value;
+    }
+    
+    // Network variable change handlers
+    private void OnNetworkGoldChanged(int previousValue, int newValue)
+    {
+        if (IsOwner)
+        {
+            gold = newValue;
+            OnGoldChanged?.Invoke(newValue);
+        }
+    }
+    
+    private void OnNetworkTrophiesChanged(int previousValue, int newValue)
+    {
+        if (IsOwner)
+        {
+            trophies = newValue;
+            OnTrophiesChanged?.Invoke(newValue);
+        }
+    }
+    
+    private void OnNetworkCurrentTrophiesChanged(int previousValue, int newValue)
+    {
+        if (IsOwner)
+        {
+            currentTrophies = newValue;
+        }
+    }
+    
+    private void OnNetworkHighestTrophiesChanged(int previousValue, int newValue)
+    {
+        if (IsOwner)
+        {
+            highestTrophies = newValue;
+        }
+    }
+    
+    private void OnNetworkGemsChanged(int previousValue, int newValue)
+    {
+        if (IsOwner)
+        {
+            gems = newValue;
+        }
+    }
+    #endregion
+    
+    #region Static Network Methods
+    public static PlayerProgress GetPlayerProgress(ulong clientId)
+    {
+        networkPlayerDict.TryGetValue(clientId, out PlayerProgress progress);
+        return progress;
+    }
+    
+    public static PlayerProgress LocalPlayerProgress
+    {
+        get
+        {
+            if (NetworkManager.Singleton != null)
+            {
+                return GetPlayerProgress(NetworkManager.Singleton.LocalClientId);
+            }
+            return Instance; // Fallback to singleton instance
+        }
+    }
+    #endregion
 
         public int GetGold()
         {
-            return gold;
+            return enableNetworking && IsSpawned ? networkGold.Value : gold;
         }
 
 // ...existing code...
@@ -223,25 +370,83 @@ public class PlayerProgress : MonoBehaviour
     #region Gold / Trophies
     public bool SpendGold(int amount)
     {
-    if (gold < amount) return false;
-    gold -= amount;
-    SaveProgress();
-    OnGoldChanged?.Invoke(gold);
-    return true;
+        if (enableNetworking && IsSpawned)
+        {
+            if (IsServer)
+            {
+                if (networkGold.Value < amount) return false;
+                networkGold.Value -= amount;
+                SaveProgress();
+                return true;
+            }
+            else
+            {
+                SpendGoldServerRpc(amount);
+                return networkGold.Value >= amount; // Optimistic return
+            }
+        }
+        else
+        {
+            if (gold < amount) return false;
+            gold -= amount;
+            SaveProgress();
+            OnGoldChanged?.Invoke(gold);
+            return true;
+        }
     }
 
     public void AddGold(int amount)
     {
-    gold += amount;
-    SaveProgress();
-    OnGoldChanged?.Invoke(gold);
+        if (enableNetworking && IsSpawned)
+        {
+            if (IsServer)
+            {
+                networkGold.Value += amount;
+                SaveProgress();
+            }
+            else
+            {
+                AddGoldServerRpc(amount);
+            }
+        }
+        else
+        {
+            gold += amount;
+            SaveProgress();
+            OnGoldChanged?.Invoke(gold);
+        }
     }
 
     public void AddTrophies(int amount)
     {
-        trophies += amount;
-        SaveProgress();
-        OnTrophiesChanged?.Invoke(trophies);
+        if (enableNetworking && IsSpawned)
+        {
+            if (IsServer)
+            {
+                networkTrophies.Value += amount;
+                networkCurrentTrophies.Value += amount;
+                if (networkCurrentTrophies.Value > networkHighestTrophies.Value)
+                {
+                    networkHighestTrophies.Value = networkCurrentTrophies.Value;
+                }
+                SaveProgress();
+            }
+            else
+            {
+                AddTrophiesServerRpc(amount);
+            }
+        }
+        else
+        {
+            trophies += amount;
+            currentTrophies += amount;
+            if (currentTrophies > highestTrophies)
+            {
+                highestTrophies = currentTrophies;
+            }
+            SaveProgress();
+            OnTrophiesChanged?.Invoke(trophies);
+        }
     }
     #endregion
 
@@ -425,6 +630,146 @@ public class PlayerProgress : MonoBehaviour
         string val = PlayerPrefs.GetString(key, "");
         if (string.IsNullOrEmpty(val)) return new List<string>();
         return val.Split(',').Where(x => !string.IsNullOrEmpty(x)).ToList();
+    }
+    #endregion
+    
+    #region Network Server RPCs
+    [ServerRpc(RequireOwnership = true)]
+    private void SpendGoldServerRpc(int amount)
+    {
+        if (networkGold.Value >= amount)
+        {
+            networkGold.Value -= amount;
+            SaveProgress();
+            SpendGoldResultClientRpc(true, networkGold.Value);
+        }
+        else
+        {
+            SpendGoldResultClientRpc(false, networkGold.Value);
+        }
+    }
+    
+    [ClientRpc]
+    private void SpendGoldResultClientRpc(bool success, int remainingGold)
+    {
+        if (!IsOwner) return;
+        
+        if (!success)
+        {
+            Debug.Log("Not enough gold!");
+        }
+    }
+    
+    [ServerRpc(RequireOwnership = true)]
+    private void AddGoldServerRpc(int amount)
+    {
+        networkGold.Value += amount;
+        SaveProgress();
+    }
+    
+    [ServerRpc(RequireOwnership = true)]
+    private void AddTrophiesServerRpc(int amount)
+    {
+        networkTrophies.Value += amount;
+        networkCurrentTrophies.Value += amount;
+        if (networkCurrentTrophies.Value > networkHighestTrophies.Value)
+        {
+            networkHighestTrophies.Value = networkCurrentTrophies.Value;
+        }
+        SaveProgress();
+    }
+    
+    // Match result methods for networked gameplay
+    [ServerRpc(RequireOwnership = true)]
+    public void OnMatchWinServerRpc(int goldReward, int trophyReward)
+    {
+        networkGold.Value += goldReward;
+        networkTrophies.Value += trophyReward;
+        networkCurrentTrophies.Value += trophyReward;
+        networkWins.Value++;
+        networkWinStreak.Value++;
+        
+        if (networkCurrentTrophies.Value > networkHighestTrophies.Value)
+        {
+            networkHighestTrophies.Value = networkCurrentTrophies.Value;
+        }
+        
+        if (networkWinStreak.Value > networkBestWinStreak.Value)
+        {
+            networkBestWinStreak.Value = networkWinStreak.Value;
+        }
+        
+        SaveProgress();
+        MatchResultClientRpc(true, goldReward, trophyReward);
+    }
+    
+    [ServerRpc(RequireOwnership = true)]
+    public void OnMatchLossServerRpc(int goldReward, int trophyPenalty)
+    {
+        networkGold.Value += goldReward;
+        networkTrophies.Value = Mathf.Max(0, networkTrophies.Value - trophyPenalty);
+        networkCurrentTrophies.Value = Mathf.Max(0, networkCurrentTrophies.Value - trophyPenalty);
+        networkLosses.Value++;
+        networkWinStreak.Value = 0; // Reset win streak
+        
+        SaveProgress();
+        MatchResultClientRpc(false, goldReward, -trophyPenalty);
+    }
+    
+    [ClientRpc]
+    private void MatchResultClientRpc(bool won, int goldChange, int trophyChange)
+    {
+        if (!IsOwner) return;
+        
+        Debug.Log($"Match {(won ? "Won" : "Lost")}! Gold: +{goldChange}, Trophies: {(trophyChange >= 0 ? "+" : "")}{trophyChange}");
+    }
+    
+    // Public getters for network values
+    public int GetTrophies() => enableNetworking && IsSpawned ? networkTrophies.Value : trophies;
+    public int GetCurrentTrophies() => enableNetworking && IsSpawned ? networkCurrentTrophies.Value : currentTrophies;
+    public int GetHighestTrophies() => enableNetworking && IsSpawned ? networkHighestTrophies.Value : highestTrophies;
+    public int GetGems() => enableNetworking && IsSpawned ? networkGems.Value : gems;
+    public int GetLevel() => enableNetworking && IsSpawned ? networkLevel.Value : 1;
+    public int GetExperience() => enableNetworking && IsSpawned ? networkExperience.Value : 0;
+    public int GetWins() => enableNetworking && IsSpawned ? networkWins.Value : 0;
+    public int GetLosses() => enableNetworking && IsSpawned ? networkLosses.Value : 0;
+    public int GetWinStreak() => enableNetworking && IsSpawned ? networkWinStreak.Value : 0;
+    public int GetBestWinStreak() => enableNetworking && IsSpawned ? networkBestWinStreak.Value : 0;
+    
+    public float GetWinRate()
+    {
+        int totalWins = GetWins();
+        int totalLosses = GetLosses();
+        int totalMatches = totalWins + totalLosses;
+        
+        if (totalMatches == 0) return 0f;
+        return (float)totalWins / totalMatches;
+    }
+    
+    // Arena/League system helpers
+    public string GetArenaName()
+    {
+        int currentTrophyCount = GetCurrentTrophies();
+        
+        if (currentTrophyCount < 400) return "Training Camp";
+        else if (currentTrophyCount < 800) return "Goblin Stadium";
+        else if (currentTrophyCount < 1100) return "Bone Pit";
+        else if (currentTrophyCount < 1400) return "Barbarian Bowl";
+        else if (currentTrophyCount < 1700) return "P.E.K.K.A's Playhouse";
+        else if (currentTrophyCount < 2000) return "Spell Valley";
+        else if (currentTrophyCount < 2300) return "Builder's Workshop";
+        else if (currentTrophyCount < 2600) return "Royal Arena";
+        else if (currentTrophyCount < 3000) return "Frozen Peak";
+        else if (currentTrophyCount < 3400) return "Jungle Arena";
+        else if (currentTrophyCount < 3800) return "Hog Mountain";
+        else if (currentTrophyCount < 4200) return "Electro Valley";
+        else if (currentTrophyCount < 4600) return "Spooky Town";
+        else if (currentTrophyCount < 5000) return "Rascal's Hideout";
+        else if (currentTrophyCount < 5500) return "Serenity Peak";
+        else if (currentTrophyCount < 6000) return "Miner's Mine";
+        else if (currentTrophyCount < 6500) return "Executioner's Kitchen";
+        else if (currentTrophyCount < 7000) return "Royal Championship";
+        else return "Champion League";
     }
     #endregion
 }

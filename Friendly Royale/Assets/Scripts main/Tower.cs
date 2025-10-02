@@ -1,13 +1,14 @@
 using UnityEngine;
+using Unity.Netcode;
 
 /// <summary>
-/// Basic tower behavior:
+/// Basic tower behavior with optional network support:
 /// - HP, attack loop, finds nearest enemy by tag "Enemy"
 /// - Applies instant melee damage (no projectile)
 /// - Shows a TowerHealthBar UI if assigned
 /// </summary>
 [RequireComponent(typeof(Collider))]
-public class Tower : MonoBehaviour
+public class Tower : NetworkBehaviour
 {
     [Header("Tower Stats")]
     public string towerName = "Princess Tower";
@@ -22,8 +23,28 @@ public class Tower : MonoBehaviour
     public string ownerTag = "Player";
 
 
+    [Header("Network Settings")]
+    [Tooltip("Enable networking for this tower")]  
+    public bool enableNetworking = false;
+    
     [Header("Faction")]
     public Unit.Faction faction;
+    
+    // Network Variables
+    private NetworkVariable<int> networkCurrentHealth = new NetworkVariable<int>(
+        default,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server
+    );
+    
+    private NetworkVariable<bool> networkIsDestroyed = new NetworkVariable<bool>(
+        false,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server
+    );
+    
+    // Network state
+    private bool isNetworkEnabled => enableNetworking && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
 
     [Header("King Tower Settings")]
     [Tooltip("Check if this tower is the enemy king tower.")]
@@ -43,14 +64,14 @@ public class Tower : MonoBehaviour
     protected int currentHealth;
     private float lastAttackTime = 0f;
     protected TowerHealthBar healthBarInstance;
-
+    
     protected virtual void Start()
     {
         currentHealth = maxHealth;
 
         if (healthBarPrefab != null)
         {
-            var canvas = FindObjectOfType<Canvas>();
+            var canvas = FindFirstObjectByType<Canvas>();
             if (canvas != null)
             {
                 healthBarInstance = Instantiate(healthBarPrefab, canvas.transform);
@@ -72,6 +93,49 @@ public class Tower : MonoBehaviour
             {
                 audioSource = gameObject.AddComponent<AudioSource>();
             }
+        }
+    }
+    
+    public override void OnNetworkSpawn()
+    {
+        if (isNetworkEnabled)
+        {
+            // Initialize network variables
+            if (IsServer)
+            {
+                networkCurrentHealth.Value = currentHealth;
+                networkIsDestroyed.Value = false;
+            }
+            
+            // Subscribe to network variable changes
+            networkCurrentHealth.OnValueChanged += OnNetworkHealthChanged;
+            networkIsDestroyed.OnValueChanged += OnNetworkDestroyedChanged;
+        }
+    }
+    
+    public override void OnNetworkDespawn()
+    {
+        if (isNetworkEnabled)
+        {
+            // Unsubscribe from events
+            networkCurrentHealth.OnValueChanged -= OnNetworkHealthChanged;
+            networkIsDestroyed.OnValueChanged -= OnNetworkDestroyedChanged;
+        }
+    }
+    
+    private void OnNetworkHealthChanged(int previousValue, int newValue)
+    {
+        currentHealth = newValue;
+        if (healthBarInstance != null)
+            healthBarInstance.UpdateHealth(currentHealth);
+    }
+    
+    private void OnNetworkDestroyedChanged(bool previousValue, bool newValue)
+    {
+        if (newValue && !previousValue)
+        {
+            // Tower was just destroyed
+            Die();
         }
     }
 
@@ -106,6 +170,41 @@ public class Tower : MonoBehaviour
     }
 
     protected virtual void Attack(GameObject enemy)
+    {
+        if (isNetworkEnabled)
+        {
+            // Network path - only server can attack
+            if (IsServer)
+            {
+                ExecuteAttack(enemy);
+            }
+            else
+            {
+                // Request attack from server
+                NetworkObject enemyNetworkObject = enemy.GetComponent<NetworkObject>();
+                if (enemyNetworkObject != null)
+                {
+                    AttackServerRpc(enemyNetworkObject.NetworkObjectId);
+                }
+            }
+        }
+        else
+        {
+            // Single-player path
+            ExecuteAttack(enemy);
+        }
+    }
+    
+    [ServerRpc(RequireOwnership = false)]
+    private void AttackServerRpc(ulong enemyNetworkId)
+    {
+        if (NetworkManager.Singleton.SpawnManager.SpawnedObjects.TryGetValue(enemyNetworkId, out NetworkObject enemyNetworkObject))
+        {
+            ExecuteAttack(enemyNetworkObject.gameObject);
+        }
+    }
+    
+    private void ExecuteAttack(GameObject enemy)
     {
         // Play attack sound if assigned
         if (attackSound != null && audioSource != null)
@@ -172,14 +271,57 @@ public class Tower : MonoBehaviour
     public virtual void TakeDamage(int dmg)
     {
         if (dmg <= 0) return;
-        currentHealth -= dmg;
-        if (currentHealth < 0) currentHealth = 0;
+        
+        if (isNetworkEnabled)
+        {
+            // Network path - only server can modify health
+            if (IsServer)
+            {
+                ApplyDamage(dmg);
+            }
+            else
+            {
+                // Request damage from server
+                TakeDamageServerRpc(dmg);
+            }
+        }
+        else
+        {
+            // Single-player path
+            ApplyDamage(dmg);
+        }
+    }
+    
+    [ServerRpc(RequireOwnership = false)]
+    private void TakeDamageServerRpc(int dmg)
+    {
+        ApplyDamage(dmg);
+    }
+    
+    private void ApplyDamage(int dmg)
+    {
+        if (isNetworkEnabled)
+        {
+            if (networkIsDestroyed.Value) return;
+            networkCurrentHealth.Value = Mathf.Max(0, networkCurrentHealth.Value - dmg);
+            currentHealth = networkCurrentHealth.Value;
+            
+            if (networkCurrentHealth.Value <= 0)
+            {
+                networkIsDestroyed.Value = true;
+            }
+        }
+        else
+        {
+            currentHealth -= dmg;
+            if (currentHealth < 0) currentHealth = 0;
+            
+            if (healthBarInstance != null)
+                healthBarInstance.UpdateHealth(currentHealth);
 
-        if (healthBarInstance != null)
-            healthBarInstance.UpdateHealth(currentHealth);
-
-        if (currentHealth <= 0)
-            Die();
+            if (currentHealth <= 0)
+                Die();
+        }
     }
 
     /// <summary>

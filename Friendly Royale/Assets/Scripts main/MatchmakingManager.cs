@@ -26,11 +26,20 @@ public class MatchmakingManager : MonoBehaviour
     [Tooltip("Button for practice mode (single player)")]
     public Button practiceButton;
     
+    [Tooltip("Button to toggle matchmaking panel visibility")]
+    public Button togglePanelButton;
+    
+    [Tooltip("Text on the toggle button")]
+    public TMP_Text toggleButtonText;
+    
     [Tooltip("Text showing matchmaking status")]
     public TMP_Text statusText;
     
     [Tooltip("Text showing current trophy count")]
     public TMP_Text trophyCountText;
+    
+    [Tooltip("Dropdown for arena selection")]
+    public TMP_Dropdown arenaDropdown;
     
     [Tooltip("Text showing selected arena")]
     public TMP_Text selectedArenaText;
@@ -107,9 +116,22 @@ public class MatchmakingManager : MonoBehaviour
         {
             practiceButton.onClick.AddListener(StartPracticeMode);
         }
+        
+        if (togglePanelButton != null)
+        {
+            togglePanelButton.onClick.AddListener(ToggleMatchmakingPanel);
+        }
+        
+        // Setup arena dropdown
+        if (arenaDropdown != null)
+        {
+            arenaDropdown.onValueChanged.AddListener(OnArenaDropdownChanged);
+            InitializeArenaDropdown();
+        }
 
         // Initialize UI
         UpdateUI();
+        UpdateToggleButtonText();
         
         // Initialize Unity Services for multiplayer
         InitializeUnityServices();
@@ -156,8 +178,7 @@ public class MatchmakingManager : MonoBehaviour
             return;
         }
         
-        // Get selected arena from deck selector
-        selectedArena = deckSelector?.selectedArena;
+        // Use selected arena from dropdown (already set in OnArenaDropdownChanged)
         if (selectedArena == null)
         {
             SetStatus("Please select an arena first!");
@@ -222,8 +243,7 @@ public class MatchmakingManager : MonoBehaviour
             return;
         }
         
-        // Get selected arena
-        selectedArena = deckSelector?.selectedArena;
+        // Use selected arena from dropdown (already set in OnArenaDropdownChanged)
         if (selectedArena == null)
         {
             SetStatus("Please select an arena first!");
@@ -295,9 +315,12 @@ public class MatchmakingManager : MonoBehaviour
             // Check if player has unlocked this card
             if (playerProgress != null && !playerProgress.IsCardUnlocked(card.cardID))
             {
-                SetStatus($"Card '{card.cardName}' is not unlocked!");
-                currentState = MatchmakingState.Error;
-                return false;
+                // Auto-unlock cards that are being used (temporary fix)
+                Debug.Log($"Auto-unlocking card: {card.cardName}");
+                playerProgress.UnlockCard(card.cardID);
+                
+                // Still show warning but don't block
+                Debug.LogWarning($"Card '{card.cardName}' was not unlocked but has been auto-unlocked for gameplay");
             }
         }
         
@@ -576,16 +599,12 @@ public class MatchmakingManager : MonoBehaviour
             trophyCountText.text = $"🏆 {playerProgress.trophies}";
         }
         
-        // Update selected arena
+        // Update selected arena (already handled by dropdown selection)
         if (selectedArenaText != null)
         {
             if (selectedArena != null)
             {
                 selectedArenaText.text = selectedArena.displayName;
-            }
-            else if (deckSelector?.selectedArena != null)
-            {
-                selectedArenaText.text = deckSelector.selectedArena.displayName;
             }
             else
             {
@@ -619,6 +638,69 @@ public class MatchmakingManager : MonoBehaviour
         var deck = deckManager.selectedCards.Where(c => c != null).ToList();
         return deck.Count >= minimumDeckSize && deck.Count <= maximumDeckSize;
     }
+    
+    void InitializeArenaDropdown()
+    {
+        if (arenaDropdown == null || arenaManager == null) return;
+        
+        // Clear existing options
+        arenaDropdown.ClearOptions();
+        
+        // Get available arenas
+        var availableArenas = new List<TMP_Dropdown.OptionData>();
+        var arenas = arenaManager.GetUnlockedArenas();
+        
+        for (int i = 0; i < arenas.Count; i++)
+        {
+            var arena = arenas[i];
+            string displayText = arena.displayName;
+            
+            // Add trophy requirement if available
+            if (arena.trophyRequirement > 0)
+            {
+                displayText += $" ({arena.trophyRequirement}🏆)";
+            }
+            
+            availableArenas.Add(new TMP_Dropdown.OptionData(displayText));
+        }
+        
+        arenaDropdown.AddOptions(availableArenas);
+        
+        // Set default selection (first unlocked arena or first arena)
+        int defaultIndex = 0;
+        if (playerProgress != null)
+        {
+            for (int i = 0; i < arenas.Count; i++)
+            {
+                if (playerProgress.trophies >= arenas[i].trophyRequirement)
+                {
+                    defaultIndex = i;
+                }
+            }
+        }
+        
+        arenaDropdown.value = defaultIndex;
+        OnArenaDropdownChanged(defaultIndex);
+    }
+    
+    void OnArenaDropdownChanged(int index)
+    {
+        if (arenaManager == null) return;
+        
+        var arenas = arenaManager.GetUnlockedArenas();
+        if (index >= 0 && index < arenas.Count)
+        {
+            selectedArena = arenas[index];
+            
+            // Update the selected arena text
+            if (selectedArenaText != null)
+            {
+                selectedArenaText.text = selectedArena.displayName;
+            }
+            
+            Debug.Log($"Selected arena: {selectedArena.displayName}");
+        }
+    }
 
     void SetStatus(string message)
     {
@@ -635,6 +717,8 @@ public class MatchmakingManager : MonoBehaviour
         {
             matchmakingPanel.SetActive(true);
         }
+        
+        UpdateToggleButtonText();
     }
 
     public void HideMatchmakingPanel()
@@ -649,6 +733,36 @@ public class MatchmakingManager : MonoBehaviour
         {
             CancelMatchmaking();
         }
+        
+        UpdateToggleButtonText();
+    }
+
+    public void ToggleMatchmakingPanel()
+    {
+        if (matchmakingPanel != null)
+        {
+            bool isActive = matchmakingPanel.activeSelf;
+            
+            if (isActive)
+            {
+                HideMatchmakingPanel();
+            }
+            else
+            {
+                ShowMatchmakingPanel();
+            }
+            
+            UpdateToggleButtonText();
+        }
+    }
+    
+    void UpdateToggleButtonText()
+    {
+        if (toggleButtonText != null && matchmakingPanel != null)
+        {
+            bool isPanelActive = matchmakingPanel.activeSelf;
+            toggleButtonText.text = isPanelActive ? "Close Panel" : "Open Panel";
+        }
     }
 
     void OnDestroy()
@@ -657,6 +771,8 @@ public class MatchmakingManager : MonoBehaviour
         if (findMatchButton != null) findMatchButton.onClick.RemoveAllListeners();
         if (cancelMatchButton != null) cancelMatchButton.onClick.RemoveAllListeners();
         if (practiceButton != null) practiceButton.onClick.RemoveAllListeners();
+        if (togglePanelButton != null) togglePanelButton.onClick.RemoveAllListeners();
+        if (arenaDropdown != null) arenaDropdown.onValueChanged.RemoveAllListeners();
         
         // Leave lobby if we're in one
         if (currentLobby != null)

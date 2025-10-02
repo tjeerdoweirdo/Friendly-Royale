@@ -1,13 +1,14 @@
 using UnityEngine;
 using UnityEngine.AI;
 using System.Collections;
+using Unity.Netcode;
 
 /// <summary>
 /// Unit with NavMeshAgent movement, waypoint lane following, melee/ranged attacks,
 /// visual spotting (FOV + LOS), chasing behavior, audio feedback, and an end-target tower.
 /// </summary>
 [RequireComponent(typeof(UnitHealth))]
-public class Unit : MonoBehaviour
+public class Unit : NetworkBehaviour
 {
     public enum Faction { Player, Enemy }
 
@@ -15,8 +16,34 @@ public class Unit : MonoBehaviour
     public enum EffectStat { None, AttackSpeed, MoveSpeed, AttackDamage, Health }
     public enum EffectMode { None, Aura, OnHit }
 
+    [Header("Network Settings")]
+    [Tooltip("Enable networking for this unit")]
+    public bool enableNetworking = false;
+    
     [Header("Faction")]
     public Faction faction = Faction.Player;
+    
+    // Network Variables
+    private NetworkVariable<int> networkFaction = new NetworkVariable<int>(
+        default,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server
+    );
+    
+    private NetworkVariable<Vector3> networkPosition = new NetworkVariable<Vector3>(
+        default,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server
+    );
+    
+    private NetworkVariable<bool> networkIsAlive = new NetworkVariable<bool>(
+        true,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server
+    );
+    
+    // Network state
+    private bool isNetworkEnabled => enableNetworking && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
 
     [Header("Role & Effects")]
     public UnitRole unitRole = UnitRole.Normal;
@@ -116,7 +143,7 @@ public class Unit : MonoBehaviour
     // perception runtime
     private float visualTimer = 0f;
     private float lostTimer = 0f;
-
+    
     void Awake()
     {
         health = GetComponent<UnitHealth>();
@@ -175,6 +202,59 @@ public class Unit : MonoBehaviour
             
         // Initialize path switching timer with random offset to spread out checks
         pathSwitchTimer = UnityEngine.Random.Range(0f, pathSwitchCheckInterval * 0.5f);
+    }
+    
+    public override void OnNetworkSpawn()
+    {
+        if (isNetworkEnabled)
+        {
+            // Initialize network variables
+            if (IsServer)
+            {
+                networkFaction.Value = (int)faction;
+                networkPosition.Value = transform.position;
+                networkIsAlive.Value = true;
+            }
+            
+            // Subscribe to network variable changes
+            networkFaction.OnValueChanged += OnNetworkFactionChanged;
+            networkPosition.OnValueChanged += OnNetworkPositionChanged;
+            networkIsAlive.OnValueChanged += OnNetworkAliveChanged;
+        }
+    }
+    
+    public override void OnNetworkDespawn()
+    {
+        if (isNetworkEnabled)
+        {
+            // Unsubscribe from events
+            networkFaction.OnValueChanged -= OnNetworkFactionChanged;
+            networkPosition.OnValueChanged -= OnNetworkPositionChanged;
+            networkIsAlive.OnValueChanged -= OnNetworkAliveChanged;
+        }
+    }
+    
+    private void OnNetworkFactionChanged(int previousValue, int newValue)
+    {
+        faction = (Faction)newValue;
+    }
+    
+    private void OnNetworkPositionChanged(Vector3 previousValue, Vector3 newValue)
+    {
+        if (!IsOwner && isNetworkEnabled)
+        {
+            // Non-owners should move towards the network position
+            transform.position = Vector3.Lerp(transform.position, newValue, Time.deltaTime * 10f);
+        }
+    }
+    
+    private void OnNetworkAliveChanged(bool previousValue, bool newValue)
+    {
+        if (!newValue && previousValue)
+        {
+            // Unit just died
+            Die();
+        }
     }
 
     /// <summary>
@@ -293,6 +373,14 @@ public class Unit : MonoBehaviour
                 {
                     // Target is out of range - forget it and resume path
                     Debug.Log($"{gameObject.name} lost target {currentTarget.name} - out of range ({distanceToTarget:F1} > {detectionRange})");
+                    
+                    // Notify network extension
+                    // Network sync: target lost
+                    if (isNetworkEnabled && IsServer)
+                    {
+                        OnTargetLostServerRpc();
+                    }
+                    
                     currentTarget = null;
                     lostTimer = 0f;
                     ResumePathOrEndTarget();
@@ -304,6 +392,14 @@ public class Unit : MonoBehaviour
                     {
                         // lost line of sight — forget and resume path/end-target
                         Debug.Log($"{gameObject.name} lost target {currentTarget.name} - no line of sight");
+                        
+                        // Notify network extension
+                        // Network sync: target lost
+                        if (isNetworkEnabled && IsServer)
+                        {
+                            OnTargetLostServerRpc();
+                        }
+                        
                         currentTarget = null;
                         lostTimer = 0f;
                         ResumePathOrEndTarget();
@@ -612,6 +708,13 @@ public class Unit : MonoBehaviour
             lostTimer = 0f;
             Debug.Log($"{gameObject.name} spotted new target: {best.name} at distance {bestDist:F1}");
             PlaySpotSound();
+            
+            // Notify network extension
+            // Network sync: target changed
+            if (isNetworkEnabled && IsServer)
+            {
+                OnTargetChangedServerRpc(best ? best.GetComponent<NetworkObject>().NetworkObjectId : 0);
+            }
         }
     }
 
@@ -659,6 +762,13 @@ public class Unit : MonoBehaviour
         if (Time.time - lastAttackTime < attackCooldown) return;
         lastAttackTime = Time.time;
         if (currentTarget == null) return;
+
+        // Notify network extension of attack
+        // Network sync: attack performed
+        if (isNetworkEnabled && IsServer)
+        {
+            OnAttackPerformedServerRpc(currentTarget ? currentTarget.GetComponent<NetworkObject>().NetworkObjectId : 0);
+        }
 
         // On-hit buff/debuff/heal
         if ((unitRole == UnitRole.Buffer || unitRole == UnitRole.Debuffer || unitRole == UnitRole.Healer) && effectMode == EffectMode.OnHit && effectStat != EffectStat.None)
@@ -806,7 +916,7 @@ public class Unit : MonoBehaviour
     // ...existing code...
 // (Remove any extra closing brackets here)
 
-    void ShootProjectile()
+    public void ShootProjectile()
     {
         if (projectilePrefab == null || firePoint == null) return;
 
@@ -1256,6 +1366,45 @@ public class Unit : MonoBehaviour
                 if (rightPath[i] != null && rightPath[i + 1] != null)
                     Gizmos.DrawLine(rightPath[i].position, rightPath[i + 1].position);
             }
+        }
+    }
+    
+    // Network RPC methods
+    [ServerRpc(RequireOwnership = false)]
+    private void OnTargetLostServerRpc()
+    {
+        // Server handles target lost logic
+        // Can be extended for multiplayer synchronization
+    }
+    
+    [ServerRpc(RequireOwnership = false)]  
+    private void OnTargetChangedServerRpc(ulong targetNetworkId)
+    {
+        // Server handles target change logic
+        // Can be extended for multiplayer synchronization
+    }
+    
+    [ServerRpc(RequireOwnership = false)]
+    private void OnAttackPerformedServerRpc(ulong targetNetworkId)
+    {
+        // Server handles attack performed logic
+        // Can be extended for multiplayer synchronization
+    }
+    
+    /// <summary>
+    /// Called when the unit dies
+    /// </summary>
+    private void Die()
+    {
+        if (isNetworkEnabled && IsServer)
+        {
+            networkIsAlive.Value = false;
+        }
+        
+        // Destroy the unit
+        if (gameObject != null)
+        {
+            Destroy(gameObject);
         }
     }
 }

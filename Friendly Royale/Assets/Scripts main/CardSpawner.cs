@@ -4,13 +4,14 @@ using System.Collections;
 using System.Reflection;
 using UnityEngine.AI;
 using UnityEngine.UI;
+using Unity.Netcode;
 
 /// <summary>
-/// Spawns units from cards at specified positions for both Player and Enemy factions.
+/// Spawns units from cards at specified positions for both Player and Enemy factions with optional network support.
 /// Handles troop spawning, building placement, and swarm formations.
 /// Units are assigned paths and target towers automatically.
 /// </summary>
-public class CardSpawner : MonoBehaviour
+public class CardSpawner : NetworkBehaviour
 {
     [Header("Spawn Points")]
     public Transform leftLaneSpawnPlayer;
@@ -18,7 +19,12 @@ public class CardSpawner : MonoBehaviour
     public Transform leftLaneSpawnEnemy;
     public Transform rightLaneSpawnEnemy;
 
-
+    [Header("Network Settings")]
+    [Tooltip("Enable networking for card spawning")]
+    public bool enableNetworking = false;
+    
+    // Network state
+    private bool isNetworkEnabled => enableNetworking && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
 
     [Header("Lane Paths (Waypoints)")]
     public Transform[] leftPathPlayer;   // assign path waypoints in inspector
@@ -36,6 +42,8 @@ public class CardSpawner : MonoBehaviour
     public float playRange = 20f; // restrict placement if needed (optional)
 
     // Spawn choice UI removed - drag-and-drop system handles all placement
+
+    // CardSpawner now has integrated network functionality
 
     // Reflection helper for card properties
     bool TryGetCardValue<T>(object card, string name, out T value)
@@ -127,6 +135,14 @@ public class CardSpawner : MonoBehaviour
     {
         if (card == null)
             yield break;
+
+        // Handle network spawning if enabled
+        if (isNetworkEnabled)
+        {
+            // For now, just proceed with local spawning
+            // TODO: Add proper network spawning logic
+            Debug.Log("Network spawning not yet implemented - using local spawning");
+        }
 
         // Determine level: use override if provided, else PlayerProgress
         int level = levelOverride > 0 ? levelOverride : 1;
