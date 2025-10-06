@@ -191,10 +191,20 @@ public class DraggableCard : MonoBehaviour, IBeginDragHandler, IDragHandler, IEn
         bool validPlacement = false;
         
         // Check if we're over a valid placement area
-        if (placementSystem != null && mainCamera != null)
+        if (mainCamera != null)
         {
             Ray ray = mainCamera.ScreenPointToRay(eventData.position);
-            validPlacement = placementSystem.TryGetPlacementPosition(ray, cardData, out worldPos);
+            
+            // Try NetworkCardPlacementSystem first, then fall back to CardPlacementSystem
+            NetworkCardPlacementSystem networkPlacement = NetworkCardPlacementSystem.Instance;
+            if (networkPlacement != null)
+            {
+                validPlacement = networkPlacement.TryGetPlacementPosition(ray, cardData, out worldPos);
+            }
+            else if (placementSystem != null)
+            {
+                validPlacement = placementSystem.TryGetPlacementPosition(ray, cardData, out worldPos);
+            }
         }
         
         if (validPlacement)
@@ -213,7 +223,12 @@ public class DraggableCard : MonoBehaviour, IBeginDragHandler, IDragHandler, IEn
         DestroyDragPreview();
         
         // Notify placement system
-        if (placementSystem != null)
+        NetworkCardPlacementSystem networkPlacementCleanup = NetworkCardPlacementSystem.Instance;
+        if (networkPlacementCleanup != null)
+        {
+            networkPlacementCleanup.HidePlacementPreview();
+        }
+        else if (placementSystem != null)
         {
             placementSystem.EndCardPlacement();
         }
@@ -275,12 +290,23 @@ public class DraggableCard : MonoBehaviour, IBeginDragHandler, IDragHandler, IEn
 
     private void UpdatePlacementValidation()
     {
-        if (placementSystem == null || mainCamera == null || dragPreview == null) return;
+        if (mainCamera == null || dragPreview == null) return;
         
         // Check if current position is valid for placement
         Ray ray = mainCamera.ScreenPointToRay(currentDragPosition);
-        Vector3 worldPos;
-        bool isValid = placementSystem.TryGetPlacementPosition(ray, cardData, out worldPos);
+        Vector3 worldPos = Vector3.zero;
+        bool isValid = false;
+        
+        // Try NetworkCardPlacementSystem first, then fall back to CardPlacementSystem
+        NetworkCardPlacementSystem networkPlacement = NetworkCardPlacementSystem.Instance;
+        if (networkPlacement != null)
+        {
+            isValid = networkPlacement.TryGetPlacementPosition(ray, cardData, out worldPos);
+        }
+        else if (placementSystem != null)
+        {
+            isValid = placementSystem.TryGetPlacementPosition(ray, cardData, out worldPos);
+        }
         
         // Update preview color based on validity
         CardDragPreview preview = dragPreview.GetComponent<CardDragPreview>();
@@ -298,8 +324,15 @@ public class DraggableCard : MonoBehaviour, IBeginDragHandler, IDragHandler, IEn
             }
         }
         
-        // Update placement indicators in the world
-        placementSystem.UpdatePlacementPreview(worldPos, isValid);
+        // Update placement indicators in the world (use NetworkCardPlacementSystem if available)
+        if (networkPlacement != null)
+        {
+            networkPlacement.ShowPlacementPreview(worldPos, cardData, Unit.Faction.Player, isValid);
+        }
+        else if (placementSystem != null)
+        {
+            placementSystem.UpdatePlacementPreview(worldPos, isValid);
+        }
     }
 
     private void PlaceCard(Vector3 worldPosition)
@@ -318,15 +351,24 @@ public class DraggableCard : MonoBehaviour, IBeginDragHandler, IDragHandler, IEn
                     DeckManager.Instance.PlayCard(cardData);
                 }
                 
-                // Spawn the unit/building at the target position using the new position-based method
-                CardSpawner spawner = FindFirstObjectByType<CardSpawner>();
-                if (spawner != null)
+                // Use NetworkCardPlacementSystem for proper multiplayer support
+                NetworkCardPlacementSystem networkPlacement = NetworkCardPlacementSystem.Instance;
+                if (networkPlacement != null)
                 {
-                    StartCoroutine(spawner.SpawnUnitAtPosition(cardData, worldPosition, Unit.Faction.Player));
+                    networkPlacement.RequestCardPlacement(worldPosition, cardData, Unit.Faction.Player);
                 }
                 else
                 {
-                    Debug.LogWarning("[DraggableCard] No CardSpawner found for placement!");
+                    // Fallback to direct spawner for offline mode
+                    CardSpawner spawner = FindFirstObjectByType<CardSpawner>();
+                    if (spawner != null)
+                    {
+                        StartCoroutine(spawner.SpawnUnitAtPosition(cardData, worldPosition, Unit.Faction.Player));
+                    }
+                    else
+                    {
+                        Debug.LogWarning("[DraggableCard] No CardSpawner or NetworkCardPlacementSystem found for placement!");
+                    }
                 }
                 
                 // Animate card disappearing

@@ -1,3 +1,4 @@
+
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -14,6 +15,9 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public class EnemyBot : MonoBehaviour
 {
+    [Header("Placement Settings")]
+    [Tooltip("Layer mask for ground placement (where the bot can place cards)")]
+    public LayerMask enemyGroundLayerMask = 1;
     [Header("Deck / hand settings")]
     [Tooltip("Optional: assign a specific AI deck. If empty the bot will build a random deck from aiPool or EnemyDeckManager.aiAllCards.")]
     public List<Card> aiDeck = new List<Card>();
@@ -103,7 +107,7 @@ public class EnemyBot : MonoBehaviour
 
     void Awake()
     {
-        if (spawner == null) spawner = FindObjectOfType<CardSpawner>();
+    if (spawner == null) spawner = FindFirstObjectByType<CardSpawner>();
 
         // try to auto-assign manager if field left empty
         if (enemyDeckManager == null)
@@ -459,16 +463,35 @@ public class EnemyBot : MonoBehaviour
             return;
         }
 
-        // Spawn the card using its assigned level (if available)
+        // Find a valid ground position for enemy placement
         int cardLevel = cardLevels.ContainsKey(c) ? cardLevels[c] : enemyLevel;
+        Vector3 spawnPosition = GetValidEnemyPlacementPosition();
         if (spawner != null)
         {
+            // NOTE: If you want to use spawnPosition, update CardSpawner.SpawnOnSideImmediate to accept a position argument.
             spawner.SpawnOnSideImmediate(UnityEngine.Random.value < 0.5f, c, Unit.Faction.Enemy, cardLevel);
         }
         else
         {
             Debug.LogWarning("EnemyBot: No CardSpawner assigned.");
         }
+
+    }
+
+    // Finds a valid ground position for enemy placement using the selected layer
+    private Vector3 GetValidEnemyPlacementPosition()
+    {
+        // Try to find a random point on the ground layer
+        for (int i = 0; i < 10; i++)
+        {
+            Vector3 randomPos = new Vector3(UnityEngine.Random.Range(-10f, 10f), 10f, UnityEngine.Random.Range(-10f, 10f));
+            if (Physics.Raycast(randomPos, Vector3.down, out RaycastHit hit, 20f, this.enemyGroundLayerMask))
+            {
+                return hit.point;
+            }
+        }
+        // Fallback to center
+        return Vector3.zero;
 
         // Draw a new card to maintain hand size (cycle like player)
         if (UsingManager)

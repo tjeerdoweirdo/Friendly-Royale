@@ -7,6 +7,8 @@ using UnityEngine;
 public class Settingspanel : MonoBehaviour
 {
     private ShopManager shopManager;
+    private PlayerProgress playerProgress;
+    
     // Call this from a UI Button to save all settings
     public void SaveSettings()
     {
@@ -16,12 +18,17 @@ public class Settingspanel : MonoBehaviour
         PlayerPrefs.SetInt("GraphicsQualityIndex", currentQualityIndex);
         // Save volume (already saved in SetMasterVolume, but for completeness)
         PlayerPrefs.SetFloat("MasterVolume", masterVolume);
+        // Save username
+        SaveUsername();
         PlayerPrefs.Save();
+        
+        Debug.Log("Settings saved successfully!");
     }
     [Header("UI Elements")]
     public TMP_Dropdown resolutionDropdown;
     public TMP_Dropdown graphicsDropdown;
     public Slider volumeSlider;
+    public TMP_InputField usernameInputField; // For editing player username
     public Button saveSettingsButton; // Assign in Inspector, set TMP_Text as child for label
     public Button resetSettingsButton; // Assign in Inspector for Reset
     [Header("Assign the CanvasGroup of the settings panel")]
@@ -71,6 +78,7 @@ public class Settingspanel : MonoBehaviour
         SetupResolutionDropdown();
         SetupGraphicsDropdown();
         SetupVolumeSlider();
+        SetupUsernameInput();
         if (saveSettingsButton != null)
         {
             saveSettingsButton.onClick.AddListener(SaveSettings);
@@ -79,8 +87,9 @@ public class Settingspanel : MonoBehaviour
         {
             resetSettingsButton.onClick.AddListener(ResetSettings);
         }
-        // Find ShopManager in scene (or assign via Inspector for best practice)
-    shopManager = FindFirstObjectByType<ShopManager>();
+        // Find managers in scene (or assign via Inspector for best practice)
+        shopManager = FindFirstObjectByType<ShopManager>();
+        playerProgress = FindFirstObjectByType<PlayerProgress>();
     }
 
     // --- UI Setup ---
@@ -125,6 +134,31 @@ public class Settingspanel : MonoBehaviour
         volumeSlider.maxValue = 1f;
         volumeSlider.value = masterVolume;
         volumeSlider.onValueChanged.AddListener(SetMasterVolume);
+    }
+
+    void SetupUsernameInput()
+    {
+        if (usernameInputField == null) return;
+        
+        // Load current username from PlayerProgress
+        string currentUsername = "";
+        if (playerProgress != null)
+        {
+            currentUsername = playerProgress.GetUsername();
+        }
+        
+        // Set the input field text
+        usernameInputField.text = currentUsername;
+        
+        // Set up character limit and validation
+        usernameInputField.characterLimit = 16; // Reasonable username length limit
+        usernameInputField.contentType = TMP_InputField.ContentType.Standard;
+        
+        // Add listener for real-time validation (optional)
+        usernameInputField.onValueChanged.AddListener(ValidateUsername);
+        
+        // Add listener for when editing ends
+        usernameInputField.onEndEdit.AddListener(OnUsernameEditEnd);
     }
 
     void Update()
@@ -291,5 +325,95 @@ public class Settingspanel : MonoBehaviour
             graphicsDropdown.value = 0;
         if (volumeSlider != null)
             volumeSlider.value = 1.0f;
+        // Reset username to empty
+        SetUsername("");
+    }
+
+    // --- Username Settings ---
+    void ValidateUsername(string username)
+    {
+        if (usernameInputField == null) return;
+        
+        // Remove any invalid characters (optional - customize as needed)
+        string cleanedUsername = username.Trim();
+        
+        // Check for length
+        if (cleanedUsername.Length > 16)
+        {
+            cleanedUsername = cleanedUsername.Substring(0, 16);
+        }
+        
+        // Update the input field if we cleaned it
+        if (cleanedUsername != username)
+        {
+            usernameInputField.text = cleanedUsername;
+        }
+    }
+    
+    void OnUsernameEditEnd(string username)
+    {
+        // This is called when the user finishes editing (presses Enter or clicks away)
+        string trimmedUsername = username.Trim();
+        
+        if (trimmedUsername != username)
+        {
+            usernameInputField.text = trimmedUsername;
+        }
+        
+        Debug.Log($"Username edited: '{trimmedUsername}'");
+    }
+    
+    public void SetUsername(string username)
+    {
+        if (playerProgress != null)
+        {
+            playerProgress.SetUsername(username);
+            Debug.Log($"Username set to: '{username}'");
+        }
+        
+        if (usernameInputField != null && usernameInputField.text != username)
+        {
+            usernameInputField.text = username;
+        }
+    }
+    
+    public string GetUsername()
+    {
+        if (playerProgress != null)
+        {
+            return playerProgress.GetUsername();
+        }
+        return "";
+    }
+    
+    void SaveUsername()
+    {
+        if (usernameInputField == null) return;
+        
+        string username = usernameInputField.text.Trim();
+        
+        // Validate username before saving
+        if (string.IsNullOrEmpty(username))
+        {
+            Debug.Log("Username cannot be empty. Using default.");
+            return;
+        }
+        
+        if (username.Length > 16)
+        {
+            username = username.Substring(0, 16);
+            usernameInputField.text = username;
+        }
+        
+        // Save to PlayerProgress
+        if (playerProgress != null)
+        {
+            playerProgress.SetUsername(username);
+            Debug.Log($"Username saved: '{username}'");
+        }
+        else
+        {
+            Debug.LogWarning("PlayerProgress not found - cannot save username");
+        }
     }
 }

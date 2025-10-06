@@ -33,13 +33,24 @@ public class ServerActivator : MonoBehaviour
     {
         try
         {
-            await UnityServices.InitializeAsync();
-            Debug.Log("Unity Services initialized successfully");
+            if (UnityServices.State != ServicesInitializationState.Initialized)
+            {
+                await UnityServices.InitializeAsync();
+                Debug.Log("Unity Services initialized successfully");
+            }
+            else
+            {
+                Debug.Log("Unity Services already initialized");
+            }
 
             if (!AuthenticationService.Instance.IsSignedIn)
             {
                 await AuthenticationService.Instance.SignInAnonymouslyAsync();
                 Debug.Log($"Signed in as: {AuthenticationService.Instance.PlayerId}");
+            }
+            else
+            {
+                Debug.Log($"Already signed in as: {AuthenticationService.Instance.PlayerId}");
             }
         }
         catch (System.Exception e)

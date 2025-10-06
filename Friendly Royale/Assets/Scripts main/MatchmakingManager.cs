@@ -49,6 +49,12 @@ public class MatchmakingManager : MonoBehaviour
     
     [Tooltip("Estimated wait time text")]
     public TMP_Text estimatedTimeText;
+    
+    [Tooltip("Text showing opponent's username when found")]
+    public TMP_Text opponentUsernameText;
+    
+    [Tooltip("Panel showing opponent info when match is found")]
+    public GameObject opponentInfoPanel;
 
     [Header("Deck Validation")]
     [Tooltip("Minimum cards required in deck")]
@@ -78,6 +84,11 @@ public class MatchmakingManager : MonoBehaviour
     private Coroutine matchmakingCoroutine;
     private Lobby currentLobby;
     private bool useRealMultiplayer = true;
+    
+    // Opponent information
+    private string opponentUsername = "";
+    private string opponentPlayerId = "";
+    private int opponentTrophies = 0;
 
     // Matchmaking states
     public enum MatchmakingState
@@ -99,6 +110,9 @@ public class MatchmakingManager : MonoBehaviour
         if (playerProgress == null) playerProgress = FindFirstObjectByType<PlayerProgress>();
         if (arenaManager == null) arenaManager = FindFirstObjectByType<ArenaManager>();
         if (deckSelector == null) deckSelector = FindFirstObjectByType<FullDeckSelector6>();
+        
+        // Subscribe to game mode changes
+        GameModeManager.OnGameModeChanged += OnGameModeChanged;
 
         // Setup UI event listeners
         if (findMatchButton != null)
@@ -172,6 +186,13 @@ public class MatchmakingManager : MonoBehaviour
     {
         if (isSearching) return;
         
+        // Check if online mode is available
+        if (GameModeManager.Instance != null && GameModeManager.Instance.IsOfflineMode())
+        {
+            SetStatus("Multiplayer unavailable - No internet connection. Try Practice Mode!");
+            return;
+        }
+        
         // Validate deck first
         if (!ValidateDeck())
         {
@@ -193,6 +214,9 @@ public class MatchmakingManager : MonoBehaviour
         // Update UI
         if (findMatchButton != null) findMatchButton.gameObject.SetActive(false);
         if (cancelMatchButton != null) cancelMatchButton.gameObject.SetActive(true);
+        
+        // Hide any previous opponent info
+        HideOpponentInfo();
         
         // Start matchmaking coroutine
         if (useRealMultiplayer)
@@ -231,6 +255,9 @@ public class MatchmakingManager : MonoBehaviour
         // Update UI
         if (findMatchButton != null) findMatchButton.gameObject.SetActive(true);
         if (cancelMatchButton != null) cancelMatchButton.gameObject.SetActive(false);
+        
+        // Hide opponent info
+        HideOpponentInfo();
         
         SetStatus("Matchmaking cancelled");
         Debug.Log("Matchmaking cancelled by player");
@@ -351,6 +378,11 @@ public class MatchmakingManager : MonoBehaviour
         
         // Phase 2: Found opponent
         currentState = MatchmakingState.FoundMatch;
+        
+        // Simulate opponent data
+        GenerateSimulatedOpponent();
+        ShowOpponentFound();
+        
         SetStatus("Opponent found! Preparing match...");
         yield return new WaitForSeconds(phase2Time);
         
@@ -441,12 +473,33 @@ public class MatchmakingManager : MonoBehaviour
         {
             // Found existing lobby, try to join it
             var lobby = response.Result.Results[0];
-            var joinResponse = LobbyService.Instance.JoinLobbyByIdAsync(lobby.Id);
+            
+            string currentPlayerUsername = GetPlayerUsername();
+            
+            var joinOptions = new JoinLobbyByIdOptions
+            {
+                Player = new Unity.Services.Lobbies.Models.Player
+                {
+                    Data = new Dictionary<string, PlayerDataObject>
+                    {
+                        {"username", new PlayerDataObject(PlayerDataObject.VisibilityOptions.Public, currentPlayerUsername)},
+                        {"trophies", new PlayerDataObject(PlayerDataObject.VisibilityOptions.Public, playerTrophies.ToString())},
+                        {"deckSize", new PlayerDataObject(PlayerDataObject.VisibilityOptions.Public, currentDeck.Count.ToString())}
+                    }
+                }
+            };
+            
+            var joinResponse = LobbyService.Instance.JoinLobbyByIdAsync(lobby.Id, joinOptions);
             yield return new WaitUntil(() => joinResponse.IsCompleted);
             
             if (joinResponse.Exception == null)
             {
                 currentLobby = joinResponse.Result;
+                
+                // Extract opponent information (the host who created the lobby)
+                ExtractOpponentFromLobby();
+                ShowOpponentFound();
+                
                 currentState = MatchmakingState.FoundMatch;
                 SetStatus("Match found! Joining...");
                 yield break;
@@ -454,6 +507,8 @@ public class MatchmakingManager : MonoBehaviour
         }
         
         // No suitable lobby found, create one
+        string playerUsername = GetPlayerUsername();
+        
         var createOptions = new CreateLobbyOptions
         {
             IsPrivate = false,
@@ -461,7 +516,17 @@ public class MatchmakingManager : MonoBehaviour
             {
                 {"arena", new DataObject(DataObject.VisibilityOptions.Public, selectedArena.arenaID)},
                 {"trophies", new DataObject(DataObject.VisibilityOptions.Public, playerTrophies.ToString())},
-                {"deckSize", new DataObject(DataObject.VisibilityOptions.Public, currentDeck.Count.ToString())}
+                {"deckSize", new DataObject(DataObject.VisibilityOptions.Public, currentDeck.Count.ToString())},
+                {"username", new DataObject(DataObject.VisibilityOptions.Public, playerUsername)}
+            },
+            Player = new Unity.Services.Lobbies.Models.Player
+            {
+                Data = new Dictionary<string, PlayerDataObject>
+                {
+                    {"username", new PlayerDataObject(PlayerDataObject.VisibilityOptions.Public, playerUsername)},
+                    {"trophies", new PlayerDataObject(PlayerDataObject.VisibilityOptions.Public, playerTrophies.ToString())},
+                    {"deckSize", new PlayerDataObject(PlayerDataObject.VisibilityOptions.Public, currentDeck.Count.ToString())}
+                }
             }
         };
         
@@ -498,6 +563,11 @@ public class MatchmakingManager : MonoBehaviour
                 if (currentLobby.Players.Count >= 2)
                 {
                     currentState = MatchmakingState.FoundMatch;
+                    
+                    // Extract opponent information
+                    ExtractOpponentFromLobby();
+                    ShowOpponentFound();
+                    
                     SetStatus("Opponent found! Starting match...");
                     break;
                 }
@@ -570,6 +640,122 @@ public class MatchmakingManager : MonoBehaviour
             }
         }
     }
+    
+    void GenerateSimulatedOpponent()
+    {
+        // Generate random opponent data for simulation
+        string[] possibleNames = {
+            "DragonSlayer", "KnightRider", "WizardMaster", "ArcherQueen",
+            "GoblinKing", "SteelWarrior", "FireMage", "IceWizard",
+            "ThunderBolt", "ShadowNinja", "GoldenKnight", "CrystalMage",
+            "IronFist", "StormBreaker", "FrostBite", "BlazeFury"
+        };
+        
+        // Select random name
+        opponentUsername = possibleNames[Random.Range(0, possibleNames.Length)];
+        
+        // Generate random player ID
+        opponentPlayerId = "sim_" + Random.Range(1000, 9999).ToString();
+        
+        // Generate opponent trophies close to player's trophies (±200)
+        int playerTrophies = playerProgress?.GetCurrentTrophies() ?? 0;
+        opponentTrophies = playerTrophies + Random.Range(-200, 201);
+        opponentTrophies = Mathf.Max(0, opponentTrophies); // Don't go below 0
+        
+        Debug.Log($"Generated simulated opponent: {opponentUsername} ({opponentTrophies} trophies)");
+    }
+    
+    void ShowOpponentFound()
+    {
+        // Update opponent info UI
+        if (opponentUsernameText != null)
+        {
+            opponentUsernameText.text = $"vs {opponentUsername}";
+        }
+        
+        // Show opponent info panel if available
+        if (opponentInfoPanel != null)
+        {
+            opponentInfoPanel.SetActive(true);
+        }
+        
+        // Update status with opponent info
+        SetStatus($"Opponent found: {opponentUsername} ({opponentTrophies}🏆)");
+    }
+    
+    void HideOpponentInfo()
+    {
+        // Clear opponent info UI
+        if (opponentUsernameText != null)
+        {
+            opponentUsernameText.text = "";
+        }
+        
+        // Hide opponent info panel
+        if (opponentInfoPanel != null)
+        {
+            opponentInfoPanel.SetActive(false);
+        }
+        
+        // Clear opponent data
+        opponentUsername = "";
+        opponentPlayerId = "";
+        opponentTrophies = 0;
+    }
+    
+    void ExtractOpponentFromLobby()
+    {
+        if (currentLobby == null || currentLobby.Players.Count < 2)
+        {
+            Debug.LogWarning("Cannot extract opponent - lobby not ready");
+            return;
+        }
+        
+        // Find the opponent (player who is not us)
+        string myPlayerId = AuthenticationService.Instance.PlayerId;
+        
+        foreach (var player in currentLobby.Players)
+        {
+            if (player.Id != myPlayerId)
+            {
+                // This is our opponent
+                opponentPlayerId = player.Id;
+                
+                // Extract username from player data
+                if (player.Data != null && player.Data.ContainsKey("username"))
+                {
+                    opponentUsername = player.Data["username"].Value;
+                }
+                else
+                {
+                    // Fallback to player ID or generate name
+                    opponentUsername = $"Player_{player.Id.Substring(0, 4)}";
+                }
+                
+                // Extract trophies from player data
+                if (player.Data != null && player.Data.ContainsKey("trophies"))
+                {
+                    if (int.TryParse(player.Data["trophies"].Value, out int trophies))
+                    {
+                        opponentTrophies = trophies;
+                    }
+                }
+                
+                Debug.Log($"Found opponent: {opponentUsername} (ID: {opponentPlayerId}, Trophies: {opponentTrophies})");
+                break;
+            }
+        }
+    }
+    
+    string GetPlayerUsername()
+    {
+        string username = playerProgress?.GetUsername() ?? "Anonymous";
+        if (string.IsNullOrEmpty(username))
+        {
+            username = "Player_" + Random.Range(1000, 9999);
+        }
+        return username;
+    }
 
 
 
@@ -612,21 +798,30 @@ public class MatchmakingManager : MonoBehaviour
             }
         }
         
-        // Update button states based on deck completeness
+        // Update button states based on deck completeness and game mode
         bool isDeckValid = ValidateDeckSilently();
+        bool isOnlineMode = GameModeManager.Instance == null || GameModeManager.Instance.IsOnlineMode();
         
         if (findMatchButton != null)
         {
-            findMatchButton.interactable = isDeckValid && !isSearching;
+            // Disable multiplayer button if offline or deck invalid or searching
+            findMatchButton.interactable = isDeckValid && !isSearching && isOnlineMode;
             var btnImage = findMatchButton.GetComponent<Image>();
             if (btnImage != null)
             {
-                btnImage.color = isDeckValid ? Color.white : Color.red;
+                // Red if deck invalid, gray if offline mode, white if ready
+                if (!isDeckValid)
+                    btnImage.color = Color.red;
+                else if (!isOnlineMode)
+                    btnImage.color = Color.gray;
+                else
+                    btnImage.color = Color.white;
             }
         }
         
         if (practiceButton != null)
         {
+            // Practice mode is always available when deck is valid
             practiceButton.interactable = isDeckValid && !isSearching;
         }
     }
@@ -702,6 +897,36 @@ public class MatchmakingManager : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Called when game mode changes between online and offline
+    /// </summary>
+    private void OnGameModeChanged(bool isOnline)
+    {
+        Debug.Log($"MatchmakingManager: Game mode changed to {(isOnline ? "ONLINE" : "OFFLINE")}");
+        
+        // Update useRealMultiplayer based on game mode
+        useRealMultiplayer = isOnline;
+        
+        // Update UI to reflect current capabilities
+        UpdateUI();
+        
+        // Update status message
+        if (isOnline)
+        {
+            SetStatus("Online mode: Multiplayer and Practice available");
+        }
+        else
+        {
+            SetStatus("Offline mode: Practice mode only");
+            
+            // Cancel any ongoing matchmaking if we go offline
+            if (isSearching)
+            {
+                CancelMatchmaking();
+            }
+        }
+    }
+    
     void SetStatus(string message)
     {
         if (statusText != null)
@@ -767,6 +992,9 @@ public class MatchmakingManager : MonoBehaviour
 
     void OnDestroy()
     {
+        // Unsubscribe from GameModeManager events
+        GameModeManager.OnGameModeChanged -= OnGameModeChanged;
+        
         // Clean up event listeners
         if (findMatchButton != null) findMatchButton.onClick.RemoveAllListeners();
         if (cancelMatchButton != null) cancelMatchButton.onClick.RemoveAllListeners();

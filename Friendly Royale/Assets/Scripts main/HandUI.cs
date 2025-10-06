@@ -481,14 +481,20 @@ public class HandUI : MonoBehaviour
                     DeckManager.Instance.PlayCard(selectedCard);
                 }
                 
-                // Spawn the unit/building at the target position
-                if (cardSpawner != null)
+                // Use NetworkCardPlacementSystem for proper multiplayer support
+                NetworkCardPlacementSystem networkPlacement = NetworkCardPlacementSystem.Instance;
+                if (networkPlacement != null)
                 {
+                    networkPlacement.RequestCardPlacement(worldPosition, selectedCard, Unit.Faction.Player);
+                }
+                else if (cardSpawner != null)
+                {
+                    // Fallback to direct spawner for offline mode
                     StartCoroutine(cardSpawner.SpawnUnitAtPosition(selectedCard, worldPosition, Unit.Faction.Player));
                 }
                 else
                 {
-                    Debug.LogWarning("[HandUI] No CardSpawner found for placement!");
+                    Debug.LogWarning("[HandUI] No CardSpawner or NetworkCardPlacementSystem found for placement!");
                 }
                 
                 Debug.Log($"[HandUI] Placed card {selectedCard.cardName} at {worldPosition}");

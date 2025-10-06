@@ -81,7 +81,7 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
         playerCamera = Camera.main;
         if (playerCamera == null)
         {
-            playerCamera = FindObjectOfType<Camera>();
+            playerCamera = FindFirstObjectByType<Camera>();
         }
     }
     
@@ -214,7 +214,7 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
     
     private bool CheckDistanceFromTowers(Vector3 position)
     {
-        Tower[] towers = FindObjectsOfType<Tower>();
+        Tower[] towers = FindObjectsByType<Tower>(FindObjectsSortMode.None);
         foreach (Tower tower in towers)
         {
             if (tower != null)
@@ -231,7 +231,7 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
     
     private bool CheckDistanceFromBuildings(Vector3 position)
     {
-        Building[] buildings = FindObjectsOfType<Building>();
+        Building[] buildings = FindObjectsByType<Building>(FindObjectsSortMode.None);
         foreach (Building building in buildings)
         {
             if (building != null)
@@ -334,6 +334,70 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
     }
     
     /// <summary>
+    /// Public method to request card placement in multiplayer
+    /// </summary>
+    public void RequestCardPlacement(Vector3 position, Card card, Unit.Faction playerFaction)
+    {
+        if (card == null)
+        {
+            Debug.LogError("[NetworkCardPlacementSystem] Cannot place card - card is null");
+            return;
+        }
+        
+        ulong clientId = NetworkManager.Singleton.LocalClientId;
+        
+        // In offline mode or single player, place directly
+        if (!IsClient || !IsServer)
+        {
+            // Direct local placement for offline/single-player
+            CardSpawner spawner = FindFirstObjectByType<CardSpawner>();
+            if (spawner != null)
+            {
+                StartCoroutine(spawner.SpawnUnitAtPosition(card, position, playerFaction));
+                Debug.Log($"[NetworkCardPlacementSystem] Local placement: {card.cardName} at {position}");
+            }
+            return;
+        }
+        
+        // For multiplayer, send request to server
+        RequestCardPlacementServerRpc(position, card.cardID, playerFaction, clientId);
+        Debug.Log($"[NetworkCardPlacementSystem] Requested placement: {card.cardName} at {position}");
+    }
+    
+    /// <summary>
+    /// Check if the placement system can handle network requests
+    /// </summary>
+    public bool IsNetworkReady()
+    {
+        return NetworkManager.Singleton != null && 
+               NetworkManager.Singleton.IsListening && 
+               (IsClient || IsServer);
+    }
+    
+    /// <summary>
+    /// Try to get a valid placement position from a ray (compatible with CardPlacementSystem interface)
+    /// </summary>
+    public bool TryGetPlacementPosition(Ray ray, Card card, out Vector3 worldPosition)
+    {
+        worldPosition = Vector3.zero;
+        
+        if (card == null || playerCamera == null)
+            return false;
+        
+        // Raycast against ground to get the world position
+        if (Physics.Raycast(ray, out RaycastHit hit, Mathf.Infinity, groundLayerMask))
+        {
+            worldPosition = hit.point;
+            
+            // Validate the position for the current player
+            ulong clientId = NetworkManager.Singleton != null ? NetworkManager.Singleton.LocalClientId : 0;
+            return IsValidPlacementPosition(worldPosition, card, Unit.Faction.Player, clientId);
+        }
+        
+        return false;
+    }
+    
+    /// <summary>
     /// Request placement validation from server
     /// </summary>
     [ServerRpc(RequireOwnership = false)]
@@ -354,6 +418,54 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
         SendValidationResultClientRpc(isValid, message, clientId);
     }
     
+    /// <summary>
+    /// Request to place a card at the specified position
+    /// </summary>
+    [ServerRpc(RequireOwnership = false)]
+    public void RequestCardPlacementServerRpc(Vector3 position, string cardID, Unit.Faction playerFaction, ulong clientId)
+    {
+        // Find card data
+        Card card = FindCardData(cardID);
+        if (card == null)
+        {
+            Debug.LogError($"[NetworkCardPlacementSystem] Card not found: {cardID}");
+            NotifyPlacementResultClientRpc(false, "Card not found", clientId);
+            return;
+        }
+        
+        // Validate the placement using server-side validation
+        bool isValid = ValidatePositionOnServer(position, card, playerFaction, clientId);
+        
+        if (isValid)
+        {
+            // Additional server-side security validation
+            if (NetworkSecurityManager.Instance != null)
+            {
+                bool securityValid = NetworkSecurityManager.Instance.ValidateCardPlay(clientId, cardID, position, playerFaction);
+                if (!securityValid)
+                {
+                    Debug.LogWarning($"[NetworkCardPlacementSystem] Security validation failed for client {clientId}");
+                    NotifyPlacementResultClientRpc(false, "Security validation failed", clientId);
+                    return;
+                }
+            }
+            
+            // Spawn the card for all clients
+            SpawnCardForAllClientsClientRpc(position, cardID, playerFaction, clientId);
+            
+            // Notify the requesting client of success
+            NotifyPlacementResultClientRpc(true, "Card placed successfully", clientId);
+            
+            Debug.Log($"[NetworkCardPlacementSystem] Successfully placed card {cardID} for client {clientId} at {position}");
+        }
+        else
+        {
+            // Notify client of failure
+            NotifyPlacementResultClientRpc(false, "Invalid placement position", clientId);
+            Debug.Log($"[NetworkCardPlacementSystem] Invalid placement for client {clientId}: {cardID} at {position}");
+        }
+    }
+    
     [ClientRpc]
     private void SendValidationResultClientRpc(bool isValid, string message, ulong targetClientId)
     {
@@ -365,10 +477,80 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
         // You can add UI feedback here
     }
     
+    /// <summary>
+    /// Notify client about placement result
+    /// </summary>
+    [ClientRpc]
+    private void NotifyPlacementResultClientRpc(bool success, string message, ulong targetClientId)
+    {
+        // Only process on the target client
+        if (NetworkManager.Singleton.LocalClientId != targetClientId) return;
+        
+        if (success)
+        {
+            Debug.Log($"[NetworkCardPlacementSystem] Card placement successful: {message}");
+            // You can add success UI feedback here (particles, sound, etc.)
+        }
+        else
+        {
+            Debug.LogWarning($"[NetworkCardPlacementSystem] Card placement failed: {message}");
+            // You can add failure UI feedback here (shake animation, error sound, etc.)
+        }
+    }
+    
+    /// <summary>
+    /// Spawn a card for all clients (called from server)
+    /// </summary>
+    [ClientRpc]
+    private void SpawnCardForAllClientsClientRpc(Vector3 position, string cardID, Unit.Faction playerFaction, ulong placingClientId)
+    {
+        // Find the card data
+        Card card = FindCardData(cardID);
+        if (card == null)
+        {
+            Debug.LogError($"[NetworkCardPlacementSystem] Cannot spawn card - card data not found: {cardID}");
+            return;
+        }
+        
+        // Find the CardSpawner to handle the actual spawning
+        CardSpawner spawner = FindFirstObjectByType<CardSpawner>();
+        if (spawner == null)
+        {
+            Debug.LogError("[NetworkCardPlacementSystem] Cannot spawn card - no CardSpawner found in scene");
+            return;
+        }
+        
+        // Spawn the card at the specified position
+        StartCoroutine(spawner.SpawnUnitAtPosition(card, position, playerFaction));
+        
+        // Show visual feedback for the placement
+        ShowNetworkPlacementFeedback(position, card, playerFaction, placingClientId);
+        
+        Debug.Log($"[NetworkCardPlacementSystem] Spawned card {cardID} for client {placingClientId} at {position}");
+    }
+    
+    /// <summary>
+    /// Show visual feedback when a card is placed by any player
+    /// </summary>
+    private void ShowNetworkPlacementFeedback(Vector3 position, Card card, Unit.Faction faction, ulong placingClientId)
+    {
+        // You can add visual effects here like:
+        // - Placement particles
+        // - Screen shake
+        // - UI notifications showing which player placed the card
+        // - Sound effects
+        
+        // For now, just log the placement
+        string playerName = placingClientId == NetworkManager.Singleton.LocalClientId ? "You" : $"Player {placingClientId}";
+        Debug.Log($"[NetworkCardPlacementSystem] {playerName} placed {card.cardName} at {position}");
+        
+        // TODO: Add visual/audio feedback here
+    }
+    
     private Card FindCardData(string cardID)
     {
         // TODO: Implement proper card database lookup
-        Card[] allCards = FindObjectsOfType<Card>();
+        Card[] allCards = FindObjectsByType<Card>(FindObjectsSortMode.None);
         foreach (Card card in allCards)
         {
             if (card.cardID == cardID)
