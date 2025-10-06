@@ -12,6 +12,7 @@ GameObject:
   - component: {fileID: 351504073290574333}
   - component: {fileID: 7663284800757127118}
   - component: {fileID: 3169840973856822417}
+  - component: {fileID: 2683073367689836781}
   - component: {fileID: 1759000141123253419}
   - component: {fileID: 5545581852983036419}
   - component: {fileID: -4603371924709040283}
@@ -116,6 +117,27 @@ CapsuleCollider:
   m_Height: 2
   m_Direction: 1
   m_Center: {x: 0, y: 0, z: 0}
+--- !u!114 &2683073367689836781
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 638458364159809943}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  GlobalObjectIdHash: 1966334271
+  InScenePlacedSourceGlobalObjectIdHash: 0
+  AlwaysReplicateAsRoot: 0
+  SynchronizeTransform: 1
+  ActiveSceneSynchronization: 0
+  SceneMigrationSynchronization: 1
+  SpawnWithObservers: 1
+  DontDestroyWithOwner: 0
+  AutoObjectParentSync: 1
 --- !u!114 &1759000141123253419
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -128,6 +150,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e9e0d19ff55fd844a8c66a977cc92af3, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  enableNetworking: 0
   maxHealth: 20
   currentHealth: 0
   onDie:
@@ -141,7 +164,7 @@ MonoBehaviour:
   smoothUI: 1
   uiSmoothSpeed: 8
   unitNameText: {fileID: 971345263074779853}
-  unitName: 
+  unitName: Bow
   cardLevelText: {fileID: 2275764890114030620}
   cardLevel: 1
 --- !u!114 &5545581852983036419
@@ -156,6 +179,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 803f61fdf50f5d442903871e3934a4ec, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  isFlyingUnit: 0
+  canAttackAirUnits: 1
+  enableNetworking: 1
   faction: 0
   unitRole: 0
   effectStat: 0
@@ -165,6 +191,7 @@ MonoBehaviour:
   auraRadius: 3
   auraInterval: 1
   effectPrefab: {fileID: 0}
+  auraRangeIndicatorPrefab: {fileID: 0}
   moveSpeed: 4
   attackRange: 16
   attackDamage: 10

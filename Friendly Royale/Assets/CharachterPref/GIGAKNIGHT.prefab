@@ -267,6 +267,7 @@ GameObject:
   - component: {fileID: 3509510298547453938}
   - component: {fileID: 9155582501348458227}
   - component: {fileID: 4775708425244397399}
+  - component: {fileID: -2647203376872177562}
   - component: {fileID: 814876902052462085}
   - component: {fileID: 7925436487557039713}
   - component: {fileID: 5705047946193683371}
@@ -373,6 +374,27 @@ CapsuleCollider:
   m_Height: 2
   m_Direction: 1
   m_Center: {x: 0, y: 0, z: 0}
+--- !u!114 &-2647203376872177562
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5746635003594701443}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  GlobalObjectIdHash: 2016622857
+  InScenePlacedSourceGlobalObjectIdHash: 0
+  AlwaysReplicateAsRoot: 0
+  SynchronizeTransform: 1
+  ActiveSceneSynchronization: 0
+  SceneMigrationSynchronization: 1
+  SpawnWithObservers: 1
+  DontDestroyWithOwner: 0
+  AutoObjectParentSync: 1
 --- !u!114 &814876902052462085
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -385,6 +407,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e9e0d19ff55fd844a8c66a977cc92af3, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  enableNetworking: 0
   maxHealth: 250
   currentHealth: 250
   onDie:
@@ -413,6 +436,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 803f61fdf50f5d442903871e3934a4ec, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  isFlyingUnit: 0
+  canAttackAirUnits: 0
+  enableNetworking: 1
   faction: 0
   unitRole: 0
   effectStat: 0

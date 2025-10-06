@@ -10,27 +10,26 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: b9d19ae5cecd7d946a078ba5b511f098, type: 3}
-  m_Name: Bombs
+  m_Name: FlyingTurret
   m_EditorClassIdentifier: 
-  cardID: Bomb
-  cardName: Bomb
-  icon: {fileID: 21300000, guid: c9fef3405f854a946b733a2c6a76c25b, type: 3}
+  cardID: FlyingTurret
+  cardName: FlyingTurret
+  icon: {fileID: 21300000, guid: b35c94a2bb36c2d42bd4ee414a1eccc1, type: 3}
   cardType: 0
-  rarity: 0
+  rarity: 1
   unlockArenaID: Tutorial
-  unitPrefab: {fileID: 3177070640604953242, guid: 54bdb768e481c70498867d973f93d502, type: 3}
+  unitPrefab: {fileID: 6500263396285057565, guid: fffbe876753000146bfa452bc2e5fcbf, type: 3}
   spellAsset: {fileID: 0}
   spellLevel: 1
   spellMaxLevel: 5
-  coinCost: 2
-  baseHealth: 25
-  baseDamage: 0
-  baseSpeed: 8
-  baseRange: 1
+  coinCost: 3
+  baseHealth: 15
+  baseDamage: 10
+  baseSpeed: 5
+  baseRange: 5
   baseAttackCooldown: 1
   maxLevel: 10
-  description: 'A quick defensive card that can Explode but cant reach the enemy
-    Tower
+  description: 'A lil group of flying turrets
 
 '
   unitRole: 0
@@ -42,8 +41,8 @@ MonoBehaviour:
   auraInterval: 1
   isSwarm: 1
   swarmCount: 3
-  swarmSpacing: 1
-  swarmFormation: 2
+  swarmSpacing: 1.5
+  swarmFormation: 0
   buildingType: 0
   buildingLifetime: 30
   buildingHpDecayPerSecond: 0

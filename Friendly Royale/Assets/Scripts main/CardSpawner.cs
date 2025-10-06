@@ -98,6 +98,16 @@ public class CardSpawner : NetworkBehaviour
     }
 
     /// <summary>
+    /// Legacy method: spawn on a side with explicit level and position (for enemy bots with position control).
+    /// </summary>
+    public void SpawnOnSideImmediate(bool leftSide, Card card, Unit.Faction faction, int level, Vector3 position)
+    {
+        if (card == null) return;
+        // Use provided position instead of default spawn point
+        StartCoroutine(SpawnUnitAtPosition(card, position, faction, level));
+    }
+
+    /// <summary>
     /// Returns a sensible worldPos used by the existing SpawnUnitFromCard logic
     /// so it picks left/right lane. Uses configured spawn points.
     /// </summary>

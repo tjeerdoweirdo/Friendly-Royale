@@ -10,6 +10,11 @@ using Unity.Netcode;
 [RequireComponent(typeof(UnitHealth))]
 public class Unit : NetworkBehaviour
 {
+    [Header("Flying/Air Settings")]
+    [Tooltip("Is this unit a flying unit?")]
+    public bool isFlyingUnit = false;
+    [Tooltip("Can this unit attack air/flying units?")]
+    public bool canAttackAirUnits = false;
     public enum Faction { Player, Enemy }
 
     public enum UnitRole { Normal, Buffer, Debuffer, Healer }
@@ -56,6 +61,10 @@ public class Unit : NetworkBehaviour
         [Header("Visual Effect")]
         [Tooltip("Prefab to spawn for the effect (e.g. aura, heal, debuff visuals)")]
         public GameObject effectPrefab;
+    [Header("Aura Range Visual")]
+    [Tooltip("Prefab to show aura range (e.g. circle)")]
+    public GameObject auraRangeIndicatorPrefab;
+    private GameObject auraRangeIndicatorInstance;
     private float auraTimer = 0f;
     private GameObject spawnedEffectInstance;
 
@@ -66,6 +75,8 @@ public class Unit : NetworkBehaviour
     public float attackCooldown = 1f;
     public float targetSearchInterval = 0.25f;
     public float stopDistanceToWaypoint = 0.1f;
+
+    // ...existing code...
 
     [Header("Ranged (optional)")]
     public bool isRanged = false;
@@ -120,7 +131,7 @@ public class Unit : NetworkBehaviour
     [Header("Perception")]
     public float detectionRange = 10f;
     [Range(0, 360)]
-    public float viewAngle = 120f;
+    public float viewAngle = 360f; // Clash Royale style: always 360°
     public float eyeHeight = 0.9f;
     public LayerMask obstacleMask = ~0;
     public float lostTargetTimeout = 3f;
@@ -315,6 +326,22 @@ public class Unit : NetworkBehaviour
             {
                 spawnedEffectInstance.transform.position = transform.position;
             }
+
+            // Show aura range indicator
+            if (auraRangeIndicatorPrefab != null && auraRangeIndicatorInstance == null)
+            {
+                auraRangeIndicatorInstance = Instantiate(auraRangeIndicatorPrefab, transform.position, Quaternion.identity, transform);
+                auraRangeIndicatorInstance.transform.localPosition = Vector3.zero;
+                // Set scale: x/z = diameter, y = thin
+                auraRangeIndicatorInstance.transform.localScale = new Vector3(auraRadius * 2f, 0.01f, auraRadius * 2f);
+            }
+            else if (auraRangeIndicatorInstance != null)
+            {
+                // Keep indicator at correct position and scale
+                auraRangeIndicatorInstance.transform.localPosition = Vector3.zero;
+                auraRangeIndicatorInstance.transform.localScale = new Vector3(auraRadius * 2f, 0.01f, auraRadius * 2f);
+                auraRangeIndicatorInstance.SetActive(true);
+            }
         }
         else
         {
@@ -323,6 +350,11 @@ public class Unit : NetworkBehaviour
             {
                 Destroy(spawnedEffectInstance);
                 spawnedEffectInstance = null;
+            }
+            // Hide aura range indicator if not active
+            if (auraRangeIndicatorInstance != null)
+            {
+                auraRangeIndicatorInstance.SetActive(false);
             }
         }
 
@@ -369,21 +401,12 @@ public class Unit : NetworkBehaviour
             {
                 // Check if target is still in range
                 float distanceToTarget = Vector3.Distance(transform.position, currentTarget.position);
+                bool lostTarget = false;
                 if (distanceToTarget > detectionRange)
                 {
                     // Target is out of range - forget it and resume path
                     Debug.Log($"{gameObject.name} lost target {currentTarget.name} - out of range ({distanceToTarget:F1} > {detectionRange})");
-                    
-                    // Notify network extension
-                    // Network sync: target lost
-                    if (isNetworkEnabled && IsServer)
-                    {
-                        OnTargetLostServerRpc();
-                    }
-                    
-                    currentTarget = null;
-                    lostTimer = 0f;
-                    ResumePathOrEndTarget();
+                    lostTarget = true;
                 }
                 else if (!CanSeeTarget(currentTarget))
                 {
@@ -392,22 +415,25 @@ public class Unit : NetworkBehaviour
                     {
                         // lost line of sight — forget and resume path/end-target
                         Debug.Log($"{gameObject.name} lost target {currentTarget.name} - no line of sight");
-                        
-                        // Notify network extension
-                        // Network sync: target lost
-                        if (isNetworkEnabled && IsServer)
-                        {
-                            OnTargetLostServerRpc();
-                        }
-                        
-                        currentTarget = null;
-                        lostTimer = 0f;
-                        ResumePathOrEndTarget();
+                        lostTarget = true;
                     }
                 }
                 else
                 {
                     lostTimer = 0f;
+                }
+                if (lostTarget)
+                {
+                    // Notify network extension
+                    if (isNetworkEnabled && IsServer)
+                    {
+                        OnTargetLostServerRpc();
+                    }
+                    currentTarget = null;
+                    lostTimer = 0f;
+                    ResumePathOrEndTarget();
+                    // Only retarget now that the previous target is lost
+                    TrySpotTargets();
                 }
             }
         }
@@ -622,27 +648,22 @@ public class Unit : NetworkBehaviour
 
     void TrySpotTargets()
     {
-        Unit[] allUnits = UnityEngine.Object.FindObjectsByType<Unit>(UnityEngine.FindObjectsSortMode.None);
+        // Clash Royale style: instantly spot nearest enemy in range, ignore angle and line-of-sight
         Transform best = null;
         float bestDist = Mathf.Infinity;
 
         // 1. Search for enemy units
+        Unit[] allUnits = UnityEngine.Object.FindObjectsByType<Unit>(UnityEngine.FindObjectsSortMode.None);
         foreach (var u in allUnits)
         {
             if (u == this) continue;
             if (u.faction == this.faction) continue;
             if (u.health == null || !u.health.IsAlive) continue;
-
-            Vector3 to = u.transform.position - transform.position;
-            float sqr = to.sqrMagnitude;
-            if (sqr > detectionRange * detectionRange) continue;
-
-            float angle = Vector3.Angle(transform.forward, to);
-            if (angle > viewAngle * 0.5f) continue;
-
-            if (!CanSeeTarget(u.transform)) continue;
-
-            float dist = Mathf.Sqrt(sqr);
+            // If target is flying, only target if canAttackAirUnits is true
+            if (u.isFlyingUnit && !this.canAttackAirUnits) continue;
+            if (!u.isFlyingUnit && this.isFlyingUnit && !this.canAttackAirUnits) continue;
+            float dist = Vector3.Distance(transform.position, u.transform.position);
+            if (dist > detectionRange) continue;
             if (dist < bestDist)
             {
                 bestDist = dist;
@@ -660,13 +681,8 @@ public class Unit : NetworkBehaviour
                 if ((int)b.faction == (int)this.faction) continue;
                 var bHealth = b.GetComponent<UnitHealth>();
                 if (bHealth != null && !bHealth.IsAlive) continue;
-                Vector3 to = b.transform.position - transform.position;
-                float sqr = to.sqrMagnitude;
-                if (sqr > detectionRange * detectionRange) continue;
-                float angle = Vector3.Angle(transform.forward, to);
-                if (angle > viewAngle * 0.5f) continue;
-                if (!CanSeeTarget(b.transform)) continue;
-                float dist = Mathf.Sqrt(sqr);
+                float dist = Vector3.Distance(transform.position, b.transform.position);
+                if (dist > detectionRange) continue;
                 if (dist < bestDist)
                 {
                     bestDist = dist;
@@ -686,14 +702,8 @@ public class Unit : NetworkBehaviour
                 if (building != null)
                     towerFaction = building.faction;
                 if (towerFaction == this.faction) continue;
-
-                Vector3 to = t.transform.position - transform.position;
-                if (to.sqrMagnitude > detectionRange * detectionRange) continue;
-                float angle = Vector3.Angle(transform.forward, to);
-                if (angle > viewAngle * 0.5f) continue;
-                if (!CanSeeTarget(t.transform)) continue;
-
-                float dist = to.magnitude;
+                float dist = Vector3.Distance(transform.position, t.transform.position);
+                if (dist > detectionRange) continue;
                 if (dist < bestDist)
                 {
                     bestDist = dist;
@@ -708,9 +718,7 @@ public class Unit : NetworkBehaviour
             lostTimer = 0f;
             Debug.Log($"{gameObject.name} spotted new target: {best.name} at distance {bestDist:F1}");
             PlaySpotSound();
-            
             // Notify network extension
-            // Network sync: target changed
             if (isNetworkEnabled && IsServer)
             {
                 OnTargetChangedServerRpc(best ? best.GetComponent<NetworkObject>().NetworkObjectId : 0);
@@ -787,6 +795,9 @@ public class Unit : NetworkBehaviour
                 {
                     if (unitTarget.faction != this.faction && unitTarget.health != null && unitTarget.health.IsAlive)
                     {
+                        // Air check
+                        if (unitTarget.isFlyingUnit && !this.canAttackAirUnits) continue;
+                        if (!unitTarget.isFlyingUnit && this.isFlyingUnit && !this.canAttackAirUnits) continue;
                         unitTarget.health.TakeDamage(attackDamage, gameObject);
                     }
                 }
@@ -855,17 +866,32 @@ public class Unit : NetworkBehaviour
             if (unitRole == UnitRole.Buffer && hit.TryGetComponent<Unit>(out var ally))
             {
                 if (ally.faction == this.faction && ally != this)
+                {
+                    // Air check for buffs
+                    if (ally.isFlyingUnit && !this.canAttackAirUnits) continue;
+                    if (!ally.isFlyingUnit && this.isFlyingUnit && !this.canAttackAirUnits) continue;
                     ApplyEffectToTarget(ally.transform);
+                }
             }
             else if (unitRole == UnitRole.Debuffer && hit.TryGetComponent<Unit>(out var enemy))
             {
                 if (enemy.faction != this.faction)
+                {
+                    // Air check for debuffs
+                    if (enemy.isFlyingUnit && !this.canAttackAirUnits) continue;
+                    if (!enemy.isFlyingUnit && this.isFlyingUnit && !this.canAttackAirUnits) continue;
                     ApplyEffectToTarget(enemy.transform);
+                }
             }
             else if (unitRole == UnitRole.Healer && hit.TryGetComponent<Unit>(out var healTarget))
             {
                 if (healTarget.faction == this.faction && healTarget != this)
+                {
+                    // Air check for heals
+                    if (healTarget.isFlyingUnit && !this.canAttackAirUnits) continue;
+                    if (!healTarget.isFlyingUnit && this.isFlyingUnit && !this.canAttackAirUnits) continue;
                     ApplyEffectToTarget(healTarget.transform);
+                }
             }
         }
     }

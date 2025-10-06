@@ -468,14 +468,25 @@ public class EnemyBot : MonoBehaviour
         Vector3 spawnPosition = GetValidEnemyPlacementPosition();
         if (spawner != null)
         {
-            // NOTE: If you want to use spawnPosition, update CardSpawner.SpawnOnSideImmediate to accept a position argument.
-            spawner.SpawnOnSideImmediate(UnityEngine.Random.value < 0.5f, c, Unit.Faction.Enemy, cardLevel);
+            // Use the position-based spawning method
+            spawner.SpawnOnSideImmediate(UnityEngine.Random.value < 0.5f, c, Unit.Faction.Enemy, cardLevel, spawnPosition);
         }
         else
         {
             Debug.LogWarning("EnemyBot: No CardSpawner assigned.");
         }
 
+        // Draw a new card to maintain hand size (cycle like player)
+        if (UsingManager)
+        {
+            enemyDeckManager.DrawOne();
+        }
+        else
+        {
+            DrawOne();
+        }
+        // Optional trace:
+        // Debug.Log($"{name} played {c.cardName} (cost {c.coinCost}, level {cardLevel}). Remaining coins: {currentCoins}. Cooldown: {cd}s");
     }
 
     // Finds a valid ground position for enemy placement using the selected layer
@@ -492,18 +503,6 @@ public class EnemyBot : MonoBehaviour
         }
         // Fallback to center
         return Vector3.zero;
-
-        // Draw a new card to maintain hand size (cycle like player)
-        if (UsingManager)
-        {
-            enemyDeckManager.DrawOne();
-        }
-        else
-        {
-            DrawOne();
-        }
-        // Optional trace:
-        // Debug.Log($"{name} played {c.cardName} (cost {c.coinCost}, level {cardLevel}). Remaining coins: {currentCoins}. Cooldown: {cd}s");
     }
     #endregion
 

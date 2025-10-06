@@ -837,6 +837,7 @@ public class FullDeckSelector6 : MonoBehaviour
         if (deckManager != null && deckManager.selectedCards != null && deckManager.selectedCards.Count == deckSize)
             deckManager.selectedCards[slot] = card;
         UpdateCurrentDeckDisplay();
+        OnSaveDeck(); // Auto-save deck after equipping
         return true;
     }
 
@@ -848,6 +849,7 @@ public class FullDeckSelector6 : MonoBehaviour
         if (deckManager != null && deckManager.selectedCards != null && deckManager.selectedCards.Count == deckSize)
             deckManager.selectedCards[slotIndex] = null;
         UpdateCurrentDeckDisplay();
+        OnSaveDeck(); // Auto-save deck after unequipping
         return true;
     }
 

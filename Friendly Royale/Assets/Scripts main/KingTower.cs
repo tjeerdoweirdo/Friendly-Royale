@@ -10,23 +10,37 @@ public class KingTower : Tower
 
     protected override void Die()
     {
+        Debug.Log($"[KingTower] {towerName} is dying! isPlayerKing = {isPlayerKing}");
+        
         base.Die();
 
-        var gm = FindObjectOfType<GameManager>();
+        // Try multiple ways to find GameManager
+        var gm = FindFirstObjectByType<GameManager>();
         if (gm == null)
         {
-            Debug.LogWarning("[KingTower] GameManager not found in scene.");
+            gm = GameObject.Find("GameManager")?.GetComponent<GameManager>();
+        }
+        if (gm == null)
+        {
+            gm = FindAnyObjectByType<GameManager>();
+        }
+        
+        if (gm == null)
+        {
+            Debug.LogError("[KingTower] GameManager not found in scene! Cannot end match.");
             return;
         }
 
+        Debug.Log($"[KingTower] Found GameManager: {gm.name}");
+
         if (isPlayerKing)
         {
-            Debug.Log("Player lost the match!");
+            Debug.Log("[KingTower] Player lost the match!");
             gm.LoseMatch("Your King was destroyed!");
         }
         else
         {
-            Debug.Log("Player won the match!");
+            Debug.Log("[KingTower] Player won the match!");
             gm.WinMatch("Enemy King was destroyed!");
         }
     }
