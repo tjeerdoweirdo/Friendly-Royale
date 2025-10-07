@@ -7,6 +7,11 @@ using System.Collections.Generic;
 /// </summary>
 public class CardPlacementSystem : MonoBehaviour
 {
+    public enum PlayerSide { Player1, Player2 }
+
+    [Header("Local Player Side")]
+    [Tooltip("Which side this client represents for placement validation")] 
+    [SerializeField] private PlayerSide localPlayerSide = PlayerSide.Player1;
     [Header("Placement Areas - Layer Based")]
     [Tooltip("Layer mask for friendly/player placement areas")]
     public LayerMask friendlyPlacementLayerMask = 0;
@@ -16,6 +21,10 @@ public class CardPlacementSystem : MonoBehaviour
     
     [Tooltip("Layer mask for non-placeable areas (blocks all card placement)")]
     public LayerMask nonPlaceableLayerMask = 0;
+
+    [Header("Per-Player Invalid Layers (Optional)")]
+    [Tooltip("Extra invalid layer mask ONLY for Player1 side")] public LayerMask player1InvalidLayerMask = 0;
+    [Tooltip("Extra invalid layer mask ONLY for Player2 side")] public LayerMask player2InvalidLayerMask = 0;
     
     [Header("Placement Area Lists")]
     [Tooltip("List of valid placement areas (colliders where cards can be placed)")]
@@ -23,6 +32,10 @@ public class CardPlacementSystem : MonoBehaviour
     
     [Tooltip("List of invalid placement areas (colliders where cards cannot be placed)")]
     public List<Collider> invalidPlacementAreas = new List<Collider>();
+
+    [Header("Per-Player Invalid Colliders (Optional)")]
+    [Tooltip("Areas invalid only for Player1")] public List<Collider> player1InvalidAreas = new List<Collider>();
+    [Tooltip("Areas invalid only for Player2")] public List<Collider> player2InvalidAreas = new List<Collider>();
     
     [Header("Bridge Areas")]
     [Tooltip("Bridge areas where placement might be restricted (add to invalid areas list for restrictions)")]
@@ -322,27 +335,40 @@ public class CardPlacementSystem : MonoBehaviour
             }
         }
         
-        // Check enemy placement layers (restricted for player)
+        // Check enemy placement layers (restricted for player) – treat as invalid
         if (enemyPlacementLayerMask != 0)
         {
-            if (Physics.CheckSphere(position, 0.1f, enemyPlacementLayerMask))
-            {
-                return true;
-            }
-            
-            Vector3 rayStart = position + Vector3.up * 1f;
-            if (Physics.Raycast(rayStart, Vector3.down, out RaycastHit hit, 2f, enemyPlacementLayerMask))
-            {
-                return true;
-            }
+            if (Physics.CheckSphere(position, 0.1f, enemyPlacementLayerMask)) return true;
+            Vector3 rayStartEnemy = position + Vector3.up * 1f;
+            if (Physics.Raycast(rayStartEnemy, Vector3.down, out RaycastHit enemyHit, 2f, enemyPlacementLayerMask)) return true;
+        }
+
+        // Side-specific invalid layer masks
+        LayerMask sideInvalidMask = (localPlayerSide == PlayerSide.Player1) ? player1InvalidLayerMask : player2InvalidLayerMask;
+        if (sideInvalidMask != 0)
+        {
+            if (Physics.CheckSphere(position, 0.1f, sideInvalidMask)) return true;
+            Vector3 rayStartSide = position + Vector3.up * 1f;
+            if (Physics.Raycast(rayStartSide, Vector3.down, out RaycastHit sideHit, 2f, sideInvalidMask)) return true;
         }
         
-        // Check invalid placement areas list
+        // Check global invalid placement areas list
         foreach (Collider invalidArea in invalidPlacementAreas)
         {
             if (invalidArea != null && IsPositionInCollider(position, invalidArea))
             {
                 Debug.Log($"[CardPlacementSystem] Position {position} is in invalid area: {invalidArea.name}");
+                return true;
+            }
+        }
+
+        // Check side-specific invalid collider lists
+        var sideInvalidList = (localPlayerSide == PlayerSide.Player1) ? player1InvalidAreas : player2InvalidAreas;
+        foreach (var sideCol in sideInvalidList)
+        {
+            if (sideCol != null && IsPositionInCollider(position, sideCol))
+            {
+                Debug.Log($"[CardPlacementSystem] Position {position} is in side-specific invalid area: {sideCol.name}");
                 return true;
             }
         }
@@ -402,9 +428,10 @@ public class CardPlacementSystem : MonoBehaviour
         }
         
         // If any restrictions are defined, require explicit valid placement
-        bool hasRestrictions = (nonPlaceableLayerMask != 0) || (enemyPlacementLayerMask != 0) || 
-                              (friendlyPlacementLayerMask != 0) || (validPlacementAreas.Count > 0) || 
-                              (invalidPlacementAreas.Count > 0);
+    bool hasRestrictions = (nonPlaceableLayerMask != 0) || (enemyPlacementLayerMask != 0) || 
+                  (friendlyPlacementLayerMask != 0) || (validPlacementAreas.Count > 0) || 
+                  (invalidPlacementAreas.Count > 0) || player1InvalidAreas.Count > 0 || player2InvalidAreas.Count > 0 ||
+                  player1InvalidLayerMask != 0 || player2InvalidLayerMask != 0;
         
         if (hasRestrictions && !foundValidArea)
         {
@@ -420,6 +447,15 @@ public class CardPlacementSystem : MonoBehaviour
         }
         
         return foundValidArea;
+    }
+
+    /// <summary>
+    /// Runtime setter for local player side (call after determining network ownership)
+    /// </summary>
+    public void SetLocalPlayerSide(PlayerSide side)
+    {
+        localPlayerSide = side;
+        Debug.Log($"[CardPlacementSystem] Local player side set to {side}");
     }
 
     private bool IsWithinPlacementRange(Vector3 position)
