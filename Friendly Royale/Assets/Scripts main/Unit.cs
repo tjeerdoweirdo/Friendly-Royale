@@ -145,6 +145,18 @@ public class Unit : NetworkBehaviour
     public AudioClip movementClip;
     public float movementPlayThreshold = 0.2f;
 
+    [Header("Animation (optional)")]
+    [Tooltip("Animator component for attack animations. Leave empty to disable animations.")]
+    public Animator animator;
+    [Tooltip("Animation clip to play when attacking (melee or ranged).")]
+    public AnimationClip attackAnimationClip;
+    [Tooltip("Animation clip to play when moving.")]
+    public AnimationClip moveAnimationClip;
+    [Tooltip("Animation clip to play when idle.")]
+    public AnimationClip idleAnimationClip;
+    [Tooltip("If true, plays attack animation. Set to false to disable attack animations.")]
+    public bool useAttackAnimation = true;
+
     // runtime
     [HideInInspector] public UnitHealth health;
     private float lastAttackTime = 0f;
@@ -765,6 +777,14 @@ public class Unit : NetworkBehaviour
         if (sfxSource != null && attackClip != null) sfxSource.PlayOneShot(attackClip);
     }
 
+    void PlayAttackAnimation()
+    {
+        if (useAttackAnimation && animator != null && attackAnimationClip != null)
+        {
+            animator.Play(attackAnimationClip.name);
+        }
+    }
+
     void TryAttack()
     {
         if (Time.time - lastAttackTime < attackCooldown) return;
@@ -811,6 +831,7 @@ public class Unit : NetworkBehaviour
                 }
             }
             PlayAttackSound();
+            PlayAttackAnimation();
             return;
         }
 
@@ -824,6 +845,7 @@ public class Unit : NetworkBehaviour
 
             ShootProjectile();
             PlayAttackSound();
+            PlayAttackAnimation();
             return;
         }
 
@@ -833,6 +855,7 @@ public class Unit : NetworkBehaviour
         {
             targetHealth.TakeDamage(attackDamage, gameObject);
             PlayAttackSound();
+            PlayAttackAnimation();
             return;
         }
 
@@ -842,6 +865,7 @@ public class Unit : NetworkBehaviour
         {
             healthComp.TakeDamage(attackDamage);
             PlayAttackSound();
+            PlayAttackAnimation();
             return;
         }
 
@@ -853,6 +877,7 @@ public class Unit : NetworkBehaviour
             {
                 targetTower.TakeDamage(attackDamage);
                 PlayAttackSound();
+                PlayAttackAnimation();
             }
         }
     }

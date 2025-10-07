@@ -26,7 +26,11 @@ public class GameManager : NetworkBehaviour
     [Header("References (assign in inspector or auto-find)")]
     public TMP_Text timerText;
     public TMP_Text resultText;
+    
+    [Header("King Towers (ASSIGN THESE IN INSPECTOR)")]
+    [Tooltip("Drag the Player King Tower here from the scene")]
     public Transform playerKingTower;
+    [Tooltip("Drag the Enemy King Tower here from the scene")]
     public Transform enemyKingTower;
 
     [Header("Reward UI")]
@@ -83,16 +87,15 @@ public class GameManager : NetworkBehaviour
         if (continueButton == null)
             continueButton = UnityEngine.Object.FindFirstObjectByType<Button>();
 
-        // Towers: Prefer inspector, fallback to tag search
+        // Towers: Only use inspector assignments (no auto-find fallback)
+        // If towers are not assigned, warn the user
         if (playerKingTower == null)
         {
-            var playerTowerObj = GameObject.FindWithTag("PlayerKingTower");
-            if (playerTowerObj != null) playerKingTower = playerTowerObj.transform;
+            Debug.LogWarning("Player King Tower is not assigned! Please assign it in the GameManager inspector.");
         }
         if (enemyKingTower == null)
         {
-            var enemyTowerObj = GameObject.FindWithTag("EnemyKingTower");
-            if (enemyTowerObj != null) enemyKingTower = enemyTowerObj.transform;
+            Debug.LogWarning("Enemy King Tower is not assigned! Please assign it in the GameManager inspector.");
         }
     }
 

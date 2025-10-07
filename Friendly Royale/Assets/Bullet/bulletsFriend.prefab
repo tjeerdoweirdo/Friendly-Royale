@@ -124,10 +124,10 @@ MonoBehaviour:
   damage: 100
   ownerFaction: 0
   effectPrefab: {fileID: 0}
-  speed: 10
+  speed: 15
   homing: 0
   target: {fileID: 0}
-  turnSpeedDeg: 720
+  turnSpeedDeg: 1000
   leadTarget: 1
   maxLeadTime: 2
   autoHome: 1

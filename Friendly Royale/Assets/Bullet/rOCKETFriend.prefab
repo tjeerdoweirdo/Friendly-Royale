@@ -123,9 +123,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   damage: 50
-  ownerTag: Player
+  ownerFaction: 0
   effectPrefab: {fileID: 1828176872806910, guid: 64891a0eb28db934898420d80ca07cb3, type: 3}
-  speed: 5
+  speed: 8
   homing: 0
   target: {fileID: 0}
   turnSpeedDeg: 720

@@ -22,15 +22,15 @@ MonoBehaviour:
   spellAsset: {fileID: 0}
   spellLevel: 1
   spellMaxLevel: 5
-  coinCost: 2
+  coinCost: 3
   baseHealth: 25
-  baseDamage: 0
+  baseDamage: 15
   baseSpeed: 8
   baseRange: 1
   baseAttackCooldown: 1
   maxLevel: 10
-  description: 'A quick defensive card that can Explode but cant reach the enemy
-    Tower
+  description: 'A quick defensive card that can Explode but self destructs
+
 
 '
   unitRole: 0

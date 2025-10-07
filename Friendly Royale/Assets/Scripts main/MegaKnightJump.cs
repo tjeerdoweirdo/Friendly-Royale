@@ -15,10 +15,10 @@ public class MegaKnightJump : MonoBehaviour
     public float meleeCooldown = 1f;
 
     [Header("Jump Settings")]
-    public float jumpRange = 6f;
+    public float jumpRange = 600f;
     public float jumpHeight = 2f;
     public float jumpDuration = 1f;
-    public float jumpCooldown = 5f;
+    public float jumpCooldown = 0.01f;
 
     [Header("Splash Damage")]
     public float splashRadius = 3f;
@@ -31,15 +31,29 @@ public class MegaKnightJump : MonoBehaviour
     public AudioClip landingSound;
     public AudioClip meleeSound;
 
+    [Header("Animation & Wind-up")]
+    public Animator animator;
+    public AnimationClip jumpWindUpClip;
+    public AnimationClip jumpClip;
+    public AnimationClip landingClip;
+    public AnimationClip meleeClip;
+    public float windUpDuration = 0.5f;
+    public bool smoothRotation = true;
+    public float rotationSpeed = 360f;
+
     private Unit unit;
     private Vector3 jumpStart;
     private Vector3 jumpTarget;
     private float jumpTimer;
     private bool isJumping;
+    private bool isWindingUp;
+    private float windUpTimer;
     private float lastJumpTime;
     private float lastMeleeTime;
     private AudioSource audioSource;
     private GameObject landingIndicatorInstance;
+    private Quaternion targetRotation;
+    private Transform currentTarget;
 
     void Awake()
     {
@@ -63,6 +77,12 @@ public class MegaKnightJump : MonoBehaviour
             return;
         }
 
+        if (isWindingUp)
+        {
+            HandleWindUp();
+            return;
+        }
+
         Transform enemy = FindClosestEnemy();
         if (enemy == null) return;
 
@@ -71,19 +91,32 @@ public class MegaKnightJump : MonoBehaviour
         // Melee if enemy is close
         if (dist <= meleeRange && Time.time - lastMeleeTime >= meleeCooldown)
         {
+            FaceTarget(enemy.position);
             DoMelee(enemy.gameObject);
             lastMeleeTime = Time.time;
         }
         // Jump if cooldown ready and enemy is not too close
         else if (dist <= jumpRange && Time.time - lastJumpTime >= jumpCooldown)
         {
-            DoJump(enemy.position);
+            StartJumpWindUp(enemy.position, enemy);
             lastJumpTime = Time.time;
+        }
+
+        // Handle smooth rotation towards target if not attacking
+        if (smoothRotation && !isJumping && !isWindingUp)
+        {
+            HandleSmoothRotation();
         }
     }
 
     void DoMelee(GameObject target)
     {
+        // Play melee animation
+        if (animator != null && meleeClip != null)
+        {
+            animator.Play(meleeClip.name);
+        }
+
         if (meleeSound != null)
             audioSource.PlayOneShot(meleeSound);
 
@@ -119,6 +152,47 @@ public class MegaKnightJump : MonoBehaviour
         }
     }
 
+    void StartJumpWindUp(Vector3 target, Transform targetTransform)
+    {
+        jumpTarget = target;
+        currentTarget = targetTransform;
+        isWindingUp = true;
+        windUpTimer = 0f;
+
+        // Face the target immediately
+        FaceTarget(jumpTarget);
+
+        // Play wind-up animation
+        if (animator != null && jumpWindUpClip != null)
+        {
+            animator.Play(jumpWindUpClip.name);
+        }
+
+        // Show landing indicator during wind-up
+        ShowLandingIndicator();
+    }
+
+    void HandleWindUp()
+    {
+        windUpTimer += Time.deltaTime;
+        
+        // Continue facing the target during wind-up
+        if (currentTarget != null)
+        {
+            FaceTarget(currentTarget.position);
+        }
+        else
+        {
+            FaceTarget(jumpTarget);
+        }
+
+        if (windUpTimer >= windUpDuration)
+        {
+            isWindingUp = false;
+            DoJump(jumpTarget);
+        }
+    }
+
     void DoJump(Vector3 target)
     {
         jumpStart = transform.position;
@@ -126,11 +200,50 @@ public class MegaKnightJump : MonoBehaviour
         jumpTimer = 0f;
         isJumping = true;
 
+        // Face jump direction
+        FaceTarget(jumpTarget);
+
         if (jumpSound != null)
             audioSource.PlayOneShot(jumpSound);
 
-        // Show landing indicator
-        ShowLandingIndicator();
+        // Play jump animation
+        if (animator != null && jumpClip != null)
+        {
+            animator.Play(jumpClip.name);
+        }
+    }
+
+    void FaceTarget(Vector3 targetPosition)
+    {
+        Vector3 direction = (targetPosition - transform.position);
+        direction.y = 0f; // Keep on horizontal plane
+        
+        if (direction.sqrMagnitude > 0.001f)
+        {
+            targetRotation = Quaternion.LookRotation(direction.normalized, Vector3.up);
+            
+            if (smoothRotation && !isJumping)
+            {
+                // Smooth rotation will be handled in HandleSmoothRotation
+            }
+            else
+            {
+                // Instant rotation for jumping
+                transform.rotation = targetRotation;
+            }
+        }
+    }
+
+    void HandleSmoothRotation()
+    {
+        if (targetRotation != Quaternion.identity)
+        {
+            transform.rotation = Quaternion.RotateTowards(
+                transform.rotation, 
+                targetRotation, 
+                rotationSpeed * Time.deltaTime
+            );
+        }
     }
 
     void HandleJump()
@@ -138,10 +251,18 @@ public class MegaKnightJump : MonoBehaviour
         jumpTimer += Time.deltaTime;
         float t = Mathf.Clamp01(jumpTimer / jumpDuration);
 
-        // Parabola
+        // Parabola movement
         Vector3 pos = Vector3.Lerp(jumpStart, jumpTarget, t);
         pos.y += Mathf.Sin(Mathf.PI * t) * jumpHeight;
         transform.position = pos;
+
+        // Maintain facing direction during jump
+        Vector3 jumpDirection = (jumpTarget - jumpStart).normalized;
+        if (jumpDirection.sqrMagnitude > 0.001f)
+        {
+            jumpDirection.y = 0f;
+            transform.rotation = Quaternion.LookRotation(jumpDirection, Vector3.up);
+        }
 
         if (t >= 1f)
         {
@@ -149,6 +270,12 @@ public class MegaKnightJump : MonoBehaviour
 
             // Hide landing indicator
             HideLandingIndicator();
+
+            // Play landing animation
+            if (animator != null && landingClip != null)
+            {
+                animator.Play(landingClip.name);
+            }
 
             if (jumpEffectPrefab != null)
                 Instantiate(jumpEffectPrefab, transform.position, Quaternion.identity);
@@ -231,7 +358,7 @@ public class MegaKnightJump : MonoBehaviour
 
     Transform FindClosestEnemy()
     {
-        Unit[] allUnits = FindObjectsOfType<Unit>();
+        Unit[] allUnits = FindObjectsByType<Unit>(FindObjectsSortMode.None);
         Transform closest = null;
         float closestDist = Mathf.Infinity;
 
@@ -250,7 +377,7 @@ public class MegaKnightJump : MonoBehaviour
         }
 
         // Also allow Towers
-        Tower[] allTowers = FindObjectsOfType<Tower>();
+        Tower[] allTowers = FindObjectsByType<Tower>(FindObjectsSortMode.None);
         foreach (var tw in allTowers)
         {
             if (tw.faction == unit.faction) continue;

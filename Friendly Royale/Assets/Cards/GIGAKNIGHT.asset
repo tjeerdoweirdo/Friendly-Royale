@@ -37,6 +37,10 @@ MonoBehaviour:
   effectMode: 0
   auraRadius: 3
   auraInterval: 1
+  isSwarm: 0
+  swarmCount: 1
+  swarmSpacing: 0.5
+  swarmFormation: 3
   buildingType: 0
   buildingLifetime: 30
   buildingHpDecayPerSecond: 0

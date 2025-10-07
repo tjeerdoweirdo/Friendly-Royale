@@ -12,6 +12,7 @@ GameObject:
   - component: {fileID: 7257907126879871604}
   - component: {fileID: 2133607373361864725}
   - component: {fileID: 2689815245043634858}
+  - component: {fileID: 1328204860777689438}
   - component: {fileID: 4170988572027536725}
   - component: {fileID: 7549407916515123767}
   - component: {fileID: 4832064874705704127}
@@ -115,6 +116,27 @@ SphereCollider:
   serializedVersion: 3
   m_Radius: 0.5
   m_Center: {x: 0, y: 0, z: 0}
+--- !u!114 &1328204860777689438
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3177070640604953242}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  GlobalObjectIdHash: 1224220792
+  InScenePlacedSourceGlobalObjectIdHash: 0
+  AlwaysReplicateAsRoot: 0
+  SynchronizeTransform: 1
+  ActiveSceneSynchronization: 0
+  SceneMigrationSynchronization: 1
+  SpawnWithObservers: 1
+  DontDestroyWithOwner: 0
+  AutoObjectParentSync: 1
 --- !u!114 &4170988572027536725
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -127,6 +149,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e9e0d19ff55fd844a8c66a977cc92af3, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  enableNetworking: 0
   maxHealth: 20
   currentHealth: 0
   onDie:
@@ -140,7 +163,7 @@ MonoBehaviour:
   smoothUI: 1
   uiSmoothSpeed: 8
   unitNameText: {fileID: 5112414908598776049}
-  unitName: 
+  unitName: Bomb
   cardLevelText: {fileID: 6061069973599104544}
   cardLevel: 1
 --- !u!114 &7549407916515123767
@@ -155,6 +178,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 803f61fdf50f5d442903871e3934a4ec, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  isFlyingUnit: 0
+  canAttackAirUnits: 0
+  enableNetworking: 0
   faction: 0
   unitRole: 0
   effectStat: 0
@@ -164,6 +190,7 @@ MonoBehaviour:
   auraRadius: 3
   auraInterval: 1
   effectPrefab: {fileID: 0}
+  auraRangeIndicatorPrefab: {fileID: 0}
   moveSpeed: 2
   attackRange: 1.2
   attackDamage: 0
@@ -204,6 +231,11 @@ MonoBehaviour:
   attackClip: {fileID: 8300000, guid: 504768b7466b7c949a6ec45a6db9b11e, type: 3}
   movementClip: {fileID: 8300000, guid: 99db3e5c410febc4eb752abedc1ca2e8, type: 3}
   movementPlayThreshold: 0.2
+  animator: {fileID: 0}
+  attackAnimationClip: {fileID: 0}
+  moveAnimationClip: {fileID: 0}
+  idleAnimationClip: {fileID: 0}
+  useAttackAnimation: 1
   health: {fileID: 0}
 --- !u!114 &4832064874705704127
 MonoBehaviour:
@@ -218,22 +250,55 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   chargeSpeed: 6
-  fuseTime: 3
-  explodeOnContact: 1
-  explodeOnReachTarget: 1
+  fuseTime: 5
+  targetScanRadius: 7
+  retargetInterval: 0.5
+  prioritizeUnitsOverBuildings: 1
+  leapRange: 6
+  leapHeight: 2.5
+  leapSpeed: 12
+  leapCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 1
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
   explosionRadius: 5
   explosionDamage: 25
   damageMask:
     serializedVersion: 2
     m_Bits: 4294967295
-  reachExplodeDistance: 1
+  damageReduction: 0.15
+  sourceCard: {fileID: 11400000, guid: b69b51e147c0f6c43b5f3f2cfa3ce722, type: 2}
+  cardLevel: 1
+  hopInterval: 0.8
+  hopForce: 5
+  hopHeight: 1.2
   spawnEffectPrefab: {fileID: 1000012882023006, guid: 5ca4c580b3888314581688fa46fb142d, type: 3}
   explosionEffectPrefab: {fileID: 1337198075554910, guid: 25c7aa9ad705fe143a4d71c1c8deb7d4, type: 3}
+  flameTailPrefab: {fileID: 1972207730512856, guid: ea4fb55d0227e604386f44f905cfe7c0, type: 3}
   spawnClip: {fileID: 8300000, guid: 885711d8e8b0f004eb3e4224741c64e7, type: 3}
   explosionClip: {fileID: 8300000, guid: 3ae7320cb215ee24ebe93a911202cf4a, type: 3}
+  hopClip: {fileID: 8300000, guid: db61a645f6255454badd328903aa9892, type: 3}
   audioSource: {fileID: 7978304350679677510}
-  doInitialHop: 1
-  hopForce: 5
 --- !u!195 &-4653527540893007753
 NavMeshAgent:
   m_ObjectHideFlags: 0

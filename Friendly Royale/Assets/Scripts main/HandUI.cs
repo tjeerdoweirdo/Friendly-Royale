@@ -321,6 +321,13 @@ public class HandUI : MonoBehaviour
                 }
             }
         }
+
+        // If we're currently in placement mode, reapply highlight to preserve user feedback.
+        // This avoids the selected card looking deselected when coins regenerate (RefreshHand is called on coin gain).
+        if (isInPlacementMode && selectedCardIndex >= 0 && selectedCardIndex < cardSlots.Count)
+        {
+            HighlightSelectedCard(selectedCardIndex, true);
+        }
     }
 
     /// <summary>
@@ -540,8 +547,19 @@ public class HandUI : MonoBehaviour
                 Image icon = cardIcons[cardIndex];
                 if (icon != null)
                 {
-                    Color originalColor = icon.color;
-                    icon.color = new Color(originalColor.r, originalColor.g, originalColor.b, 1f) * 1.2f;
+                    // Recompute a stable base color (prevents cumulative brightening on repeated RefreshHand calls)
+                    Color baseColor = icon.color;
+                    // If we can access the card data, derive the intended base color directly
+                    if (DeckManager.Instance != null && cardIndex < DeckManager.Instance.hand.Count)
+                    {
+                        var card = DeckManager.Instance.hand[cardIndex];
+                        bool canAfford = CoinSystem.Instance != null && CoinSystem.Instance.currentCoins >= card.coinCost;
+                        baseColor = canAfford ? GetRarityColor(card.rarity) : new Color(0.5f, 0.5f, 0.5f, 0.7f);
+                    }
+                    // Apply highlight multiplier once
+                    var highlighted = baseColor * 1.2f;
+                    highlighted.a = 1f; // ensure fully opaque
+                    icon.color = highlighted;
                 }
             }
         }
