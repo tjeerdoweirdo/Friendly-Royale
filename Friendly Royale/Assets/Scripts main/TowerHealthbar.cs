@@ -52,9 +52,21 @@ public class TowerHealthBar : MonoBehaviour
     /// </summary>
     public void UpdateHealth(int currentHP)
     {
+        int oldHealth = currentHealth;
         currentHealth = Mathf.Clamp(currentHP, 0, maxHealth);
+        
+        Debug.Log($"[TowerHealthBar] UpdateHealth called: {oldHealth} -> {currentHealth}/{maxHealth}");
+        
         if (slider != null)
+        {
             slider.value = currentHealth;
+            Debug.Log($"[TowerHealthBar] Slider updated to: {slider.value}");
+        }
+        else
+        {
+            Debug.LogWarning("[TowerHealthBar] Slider is null!");
+        }
+        
         UpdateTex();
     }
 
@@ -62,8 +74,13 @@ public class TowerHealthBar : MonoBehaviour
     {
         if (tex != null)
         {
-            string label = (isEnemyHealthBar ? "Enemy Tower" : "Player Tower") + " " + currentHealth;
+            string label = (isEnemyHealthBar ? "Enemy Tower" : "Player Tower") + $" {currentHealth}/{maxHealth}";
             tex.text = label;
+            Debug.Log($"[TowerHealthBar] Text updated to: {label}");
+        }
+        else
+        {
+            Debug.LogWarning("[TowerHealthBar] Text component is null!");
         }
     }
 
@@ -71,8 +88,21 @@ public class TowerHealthBar : MonoBehaviour
     {
         if (target == null)
         {
+            Debug.Log("[TowerHealthBar] Target is null, destroying health bar");
             Destroy(gameObject);
             return;
+        }
+
+        // Continuously sync with target's health (Tower or KingTower)
+        var tower = target.GetComponent<Tower>();
+        if (tower != null)
+        {
+            // Force sync if health differs
+            if (tower.CurrentHealth != currentHealth)
+            {
+                Debug.Log($"[TowerHealthBar] Health desync detected! Tower: {tower.CurrentHealth}, UI: {currentHealth}. Forcing sync.");
+                UpdateHealth(tower.CurrentHealth);
+            }
         }
 
         // Resolve an active camera: prefer Camera.main, otherwise find any enabled camera

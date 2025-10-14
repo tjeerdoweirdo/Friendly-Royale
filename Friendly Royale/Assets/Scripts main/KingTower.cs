@@ -5,8 +5,18 @@ using UnityEngine;
 /// </summary>
 public class KingTower : Tower
 {
-    [Tooltip("Set to true for player's king, false for enemy king.")]
-    public bool isPlayerKing = true;
+    public enum KingTowerType
+    {
+        PlayerKing,
+        EnemyKing
+    }
+
+    [Header("King Tower Type")]
+    [Tooltip("Select whether this is a Player King Tower or Enemy King Tower")]
+    public KingTowerType kingTowerType = KingTowerType.PlayerKing;
+    
+    // Backward compatibility property
+    public bool isPlayerKing => kingTowerType == KingTowerType.PlayerKing;
 
     [Header("Level & Health Scaling")]
     [Tooltip("Base max health for King Tower at level 1")] public int baseMaxHealth = 4000;
@@ -19,11 +29,24 @@ public class KingTower : Tower
     [Tooltip("When the king dies, also destroy all other Towers in the scene (besides this)")] public bool destroyAllTowersOnDeath = false;
     [Tooltip("Extra objects to destroy when the king dies (e.g., effects, barriers)")] public GameObject[] extraKingObjectsToDestroyOnDeath;
 
+    [Header("Auto-Sync Settings")]
+    [Tooltip("If enabled, automatically sets ownerTag and faction based on King Tower Type selection")]
+    public bool autoSyncSettings = true;
+    
+#if UNITY_EDITOR
+    [Space]
+    [Tooltip("Click to manually sync ownerTag and faction to match King Tower Type")]
+    public bool syncNow = false;
+#endif
+
     protected override void Start()
     {
-        // Ensure ownerTag and faction are correctly set so damage/isEnemy checks work
-        ownerTag = isPlayerKing ? "Player" : "Enemy";
-        faction = isPlayerKing ? Unit.Faction.Player : Unit.Faction.Enemy;
+        // Only auto-set ownerTag and faction if autoSyncSettings is enabled
+        if (autoSyncSettings)
+        {
+            ownerTag = isPlayerKing ? "Player" : "Enemy";
+            faction = isPlayerKing ? Unit.Faction.Player : Unit.Faction.Enemy;
+        }
 
         // Compute max health from level before base.Start() initializes currentHealth/health bar
         int level = 1;
@@ -42,7 +65,74 @@ public class KingTower : Tower
         }
         maxHealth = Mathf.Max(1, computedMax);
         base.Start();
-        Debug.Log($"[KingTower] Start -> {towerName}: isPlayerKing={isPlayerKing}, ownerTag={ownerTag}, faction={faction}, level={level}, maxHealth={maxHealth}");
+        Debug.Log($"[KingTower] Start -> {towerName}: kingTowerType={kingTowerType}, ownerTag={ownerTag}, faction={faction}, level={level}, maxHealth={maxHealth}");
+    }
+
+#if UNITY_EDITOR
+    private KingTowerType lastKingTowerType;
+    private bool hasInitialized = false;
+
+    /// <summary>
+    /// Validates settings in the editor to ensure consistency
+    /// </summary>
+    void OnValidate()
+    {
+        // Initialize on first run
+        if (!hasInitialized)
+        {
+            lastKingTowerType = kingTowerType;
+            hasInitialized = true;
+            
+            // Only auto-sync on first initialization if enabled
+            if (autoSyncSettings)
+            {
+                SyncSettingsToKingTowerType();
+            }
+            return;
+        }
+
+        // Only auto-sync if the King Tower Type dropdown was changed AND auto-sync is enabled
+        if (autoSyncSettings && lastKingTowerType != kingTowerType)
+        {
+            SyncSettingsToKingTowerType();
+        }
+        
+        // Manual sync button
+        if (syncNow)
+        {
+            syncNow = false; // Reset the button
+            SyncSettingsToKingTowerType();
+        }
+        
+        // Update the last known type
+        lastKingTowerType = kingTowerType;
+    }
+    
+    private void SyncSettingsToKingTowerType()
+    {
+        if (kingTowerType == KingTowerType.PlayerKing)
+        {
+            ownerTag = "Player";
+            faction = Unit.Faction.Player;
+            if (string.IsNullOrEmpty(towerName)) towerName = "Player King Tower";
+        }
+        else if (kingTowerType == KingTowerType.EnemyKing)
+        {
+            ownerTag = "Enemy";
+            faction = Unit.Faction.Enemy;
+            if (string.IsNullOrEmpty(towerName)) towerName = "Enemy King Tower";
+        }
+    }
+#endif
+
+    /// <summary>
+    /// Override TakeDamage to add logging for debugging
+    /// </summary>
+    public override void TakeDamage(int dmg)
+    {
+        Debug.Log($"[KingTower] {towerName} taking {dmg} damage! Current health BEFORE: {currentHealth}/{maxHealth}, Faction: {faction}");
+        base.TakeDamage(dmg);
+        Debug.Log($"[KingTower] {towerName} health AFTER damage: {currentHealth}/{maxHealth}");
     }
 
     protected override void Die()

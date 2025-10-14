@@ -50,11 +50,50 @@ public class MatchmakingManager : MonoBehaviour
     [Tooltip("Estimated wait time text")]
     public TMP_Text estimatedTimeText;
     
+    [Header("Player Info UI")]
+    [Tooltip("Text showing local player's username")]
+    public TMP_Text localPlayerUsernameText;
+    
+    [Tooltip("Text showing local player's trophy count")]
+    public TMP_Text localPlayerTrophyText;
+    
+    [Tooltip("Text showing local player's deck size")]
+    public TMP_Text localPlayerDeckSizeText;
+    
+    [Tooltip("Image showing local player's avatar/profile picture")]
+    public Image localPlayerAvatarImage;
+
+    [Header("Opponent Info UI")]
     [Tooltip("Text showing opponent's username when found")]
     public TMP_Text opponentUsernameText;
     
-    [Tooltip("Panel showing opponent info when match is found")]
-    public GameObject opponentInfoPanel;
+    [Tooltip("Text showing opponent's trophy count")]
+    public TMP_Text opponentTrophyText;
+    
+    [Tooltip("Text showing opponent's deck size")]
+    public TMP_Text opponentDeckSizeText;
+    
+    [Tooltip("Image showing opponent's avatar/profile picture")]
+    public Image opponentAvatarImage;
+    
+    [Tooltip("Any additional UI elements to show/hide when opponent is found/lost")]
+    public GameObject[] opponentUIElements;
+
+    [Header("Player Side Selection")]
+    [Tooltip("Toggle to decide if local player is Player 1 (left side) or Player 2 (right side) - will be overridden by random assignment in multiplayer")]
+    public Toggle playerSideToggle;
+    
+    [Tooltip("Text showing 'Player 1' label")]
+    public TMP_Text player1Label;
+    
+    [Tooltip("Text showing 'Player 2' label")]
+    public TMP_Text player2Label;
+    
+    [Tooltip("If true, local player will be Player 1 when toggle is ON (practice mode only)")]
+    public bool localIsPlayer1WhenToggleOn = true;
+    
+    [Tooltip("If true, player sides are randomly assigned when opponent is found")]
+    public bool randomizePlayerSides = true;
 
     [Header("Deck Validation")]
     [Tooltip("Minimum cards required in deck")]
@@ -85,10 +124,17 @@ public class MatchmakingManager : MonoBehaviour
     private Lobby currentLobby;
     private bool useRealMultiplayer = true;
     
+    // Local player information
+    private string localPlayerUsername = "";
+    private int localPlayerTrophies = 0;
+    private int localPlayerDeckSize = 0;
+    private bool localPlayerIsPlayer1 = true;
+
     // Opponent information
     private string opponentUsername = "";
     private string opponentPlayerId = "";
     private int opponentTrophies = 0;
+    private int opponentDeckSize = 0;
 
     // Matchmaking states
     public enum MatchmakingState
@@ -142,10 +188,20 @@ public class MatchmakingManager : MonoBehaviour
             arenaDropdown.onValueChanged.AddListener(OnArenaDropdownChanged);
             InitializeArenaDropdown();
         }
+        
+        // Setup player side toggle
+        if (playerSideToggle != null)
+        {
+            playerSideToggle.onValueChanged.AddListener(OnPlayerSideToggleChanged);
+        }
 
+        // Initialize local player info
+        UpdateLocalPlayerInfo();
+        
         // Initialize UI
         UpdateUI();
         UpdateToggleButtonText();
+        UpdatePlayerSideLabels();
         
         // Initialize Unity Services for multiplayer
         InitializeUnityServices();
@@ -287,6 +343,12 @@ public class MatchmakingManager : MonoBehaviour
             playerProgress?.SaveSelectedDeckForArena("global", currentDeck.Select(c => c.cardID).ToList());
         }
         
+        // Save player side preference for GameManager to use
+        PlayerPrefs.SetInt("LocalPlayerIsPlayer1", localPlayerIsPlayer1 ? 1 : 0);
+        PlayerPrefs.SetString("LocalPlayerUsername", localPlayerUsername);
+        PlayerPrefs.SetString("OpponentUsername", "AI Bot");
+        PlayerPrefs.Save();
+        
         // Load the arena scene
         if (!string.IsNullOrEmpty(selectedArena.sceneName))
         {
@@ -407,6 +469,12 @@ public class MatchmakingManager : MonoBehaviour
             deckManager.SetStartingDeck(currentDeck, selectedArena);
             playerProgress?.SaveSelectedDeckForArena("global", currentDeck.Select(c => c.cardID).ToList());
         }
+        
+        // Save player side preference for GameManager to use
+        PlayerPrefs.SetInt("LocalPlayerIsPlayer1", localPlayerIsPlayer1 ? 1 : 0);
+        PlayerPrefs.SetString("LocalPlayerUsername", localPlayerUsername);
+        PlayerPrefs.SetString("OpponentUsername", opponentUsername);
+        PlayerPrefs.Save();
         
         // For now, just start the same arena scene - in the future this would connect to Unity Netcode
         SetStatus("Joining multiplayer match...");
@@ -662,22 +730,63 @@ public class MatchmakingManager : MonoBehaviour
         opponentTrophies = playerTrophies + Random.Range(-200, 201);
         opponentTrophies = Mathf.Max(0, opponentTrophies); // Don't go below 0
         
-        Debug.Log($"Generated simulated opponent: {opponentUsername} ({opponentTrophies} trophies)");
+        // Generate random deck size (usually 4-8 cards)
+        opponentDeckSize = Random.Range(4, 9);
+        
+        Debug.Log($"Generated simulated opponent: {opponentUsername} ({opponentTrophies} trophies, {opponentDeckSize} cards)");
     }
     
     void ShowOpponentFound()
     {
-        // Update opponent info UI
+        // Update opponent username
         if (opponentUsernameText != null)
         {
             opponentUsernameText.text = $"vs {opponentUsername}";
         }
         
-        // Show opponent info panel if available
-        if (opponentInfoPanel != null)
+        // Update opponent trophy count
+        if (opponentTrophyText != null)
         {
-            opponentInfoPanel.SetActive(true);
+            opponentTrophyText.text = $"{opponentTrophies}🏆";
         }
+        
+        // Update opponent deck size
+        if (opponentDeckSizeText != null)
+        {
+            opponentDeckSizeText.text = $"Deck: {opponentDeckSize} cards";
+        }
+        
+        // Show opponent UI elements
+        if (opponentUIElements != null)
+        {
+            foreach (var element in opponentUIElements)
+            {
+                if (element != null)
+                {
+                    element.SetActive(true);
+                }
+            }
+        }
+        
+        // Randomly assign player sides for multiplayer
+        if (randomizePlayerSides && isSearching)
+        {
+            localPlayerIsPlayer1 = Random.Range(0, 2) == 0; // 50/50 chance
+            string playerSide = localPlayerIsPlayer1 ? "Player 1" : "Player 2";
+            Debug.Log($"Randomly assigned: Local player is {playerSide}");
+            
+            // Temporarily show assignment in status
+            SetStatus($"Assigned as {playerSide}! Match starting...");
+            
+            // Update toggle to match random assignment (visual feedback only)
+            if (playerSideToggle != null)
+            {
+                playerSideToggle.SetIsOnWithoutNotify(localPlayerIsPlayer1 == localIsPlayer1WhenToggleOn);
+            }
+        }
+        
+        // Update player side labels to show opponent names
+        UpdatePlayerSideLabels();
         
         // Update status with opponent info
         SetStatus($"Opponent found: {opponentUsername} ({opponentTrophies}🏆)");
@@ -685,22 +794,44 @@ public class MatchmakingManager : MonoBehaviour
     
     void HideOpponentInfo()
     {
-        // Clear opponent info UI
+        // Clear opponent username
         if (opponentUsernameText != null)
         {
             opponentUsernameText.text = "";
         }
         
-        // Hide opponent info panel
-        if (opponentInfoPanel != null)
+        // Clear opponent trophy count
+        if (opponentTrophyText != null)
         {
-            opponentInfoPanel.SetActive(false);
+            opponentTrophyText.text = "";
         }
+        
+        // Clear opponent deck size
+        if (opponentDeckSizeText != null)
+        {
+            opponentDeckSizeText.text = "";
+        }
+        
+        // Hide opponent UI elements
+        if (opponentUIElements != null)
+        {
+            foreach (var element in opponentUIElements)
+            {
+                if (element != null)
+                {
+                    element.SetActive(false);
+                }
+            }
+        }
+        
+        // Update player side labels to remove opponent names
+        UpdatePlayerSideLabels();
         
         // Clear opponent data
         opponentUsername = "";
         opponentPlayerId = "";
         opponentTrophies = 0;
+        opponentDeckSize = 0;
     }
     
     void ExtractOpponentFromLobby()
@@ -741,7 +872,16 @@ public class MatchmakingManager : MonoBehaviour
                     }
                 }
                 
-                Debug.Log($"Found opponent: {opponentUsername} (ID: {opponentPlayerId}, Trophies: {opponentTrophies})");
+                // Extract deck size from player data
+                if (player.Data != null && player.Data.ContainsKey("deckSize"))
+                {
+                    if (int.TryParse(player.Data["deckSize"].Value, out int deckSize))
+                    {
+                        opponentDeckSize = deckSize;
+                    }
+                }
+                
+                Debug.Log($"Found opponent: {opponentUsername} (ID: {opponentPlayerId}, Trophies: {opponentTrophies}, Deck: {opponentDeckSize})");
                 break;
             }
         }
@@ -777,8 +917,91 @@ public class MatchmakingManager : MonoBehaviour
         }
     }
 
+    void UpdateLocalPlayerInfo()
+    {
+        // Update local player data
+        localPlayerUsername = GetPlayerUsername();
+        localPlayerTrophies = playerProgress?.trophies ?? 0;
+        localPlayerDeckSize = ValidateDeckSilently() ? deckManager.selectedCards.Where(c => c != null).Count() : 0;
+        
+        // Update UI
+        if (localPlayerUsernameText != null)
+        {
+            localPlayerUsernameText.text = localPlayerUsername;
+        }
+        
+        if (localPlayerTrophyText != null)
+        {
+            localPlayerTrophyText.text = $"{localPlayerTrophies}🏆";
+        }
+        
+        if (localPlayerDeckSizeText != null)
+        {
+            localPlayerDeckSizeText.text = $"Deck: {localPlayerDeckSize} cards";
+        }
+        
+        // Update player side based on toggle (only for practice mode)
+        if (!isSearching)
+        {
+            localPlayerIsPlayer1 = playerSideToggle != null ? 
+                (playerSideToggle.isOn == localIsPlayer1WhenToggleOn) : true;
+        }
+    }
+
+    void OnPlayerSideToggleChanged(bool toggleValue)
+    {
+        // Only allow manual toggle changes when not searching (practice mode)
+        if (!isSearching)
+        {
+            localPlayerIsPlayer1 = toggleValue == localIsPlayer1WhenToggleOn;
+            UpdatePlayerSideLabels();
+            Debug.Log($"Player side changed: Local player is now {(localPlayerIsPlayer1 ? "Player 1" : "Player 2")}");
+        }
+        else
+        {
+            // During matchmaking, sides are randomly assigned - inform user
+            Debug.Log("Player sides are randomly assigned during matchmaking");
+        }
+    }
+    
+    void UpdatePlayerSideLabels()
+    {
+        string randomIndicator = (isSearching && randomizePlayerSides) ? " [Random]" : "";
+        
+        if (player1Label != null)
+        {
+            if (localPlayerIsPlayer1)
+            {
+                player1Label.text = $"Player 1 (You){randomIndicator}";
+            }
+            else
+            {
+                string opponentName = isSearching && !string.IsNullOrEmpty(opponentUsername) ? opponentUsername : "Opponent";
+                player1Label.text = isSearching && !string.IsNullOrEmpty(opponentUsername) ? 
+                    $"Player 1 ({opponentName}){randomIndicator}" : "Player 1";
+            }
+        }
+        
+        if (player2Label != null)
+        {
+            if (!localPlayerIsPlayer1)
+            {
+                player2Label.text = $"Player 2 (You){randomIndicator}";
+            }
+            else
+            {
+                string opponentName = isSearching && !string.IsNullOrEmpty(opponentUsername) ? opponentUsername : "Opponent";
+                player2Label.text = isSearching && !string.IsNullOrEmpty(opponentUsername) ? 
+                    $"Player 2 ({opponentName}){randomIndicator}" : "Player 2";
+            }
+        }
+    }
+
     void UpdateUI()
     {
+        // Update local player info
+        UpdateLocalPlayerInfo();
+        
         // Update trophy count
         if (trophyCountText != null && playerProgress != null)
         {
@@ -1001,6 +1224,7 @@ public class MatchmakingManager : MonoBehaviour
         if (practiceButton != null) practiceButton.onClick.RemoveAllListeners();
         if (togglePanelButton != null) togglePanelButton.onClick.RemoveAllListeners();
         if (arenaDropdown != null) arenaDropdown.onValueChanged.RemoveAllListeners();
+        if (playerSideToggle != null) playerSideToggle.onValueChanged.RemoveAllListeners();
         
         // Leave lobby if we're in one
         if (currentLobby != null)

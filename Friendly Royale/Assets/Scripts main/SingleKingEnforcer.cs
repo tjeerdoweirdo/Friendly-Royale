@@ -40,7 +40,7 @@ public class SingleKingEnforcer : MonoBehaviour
                     king.healthBarPrefab = t.healthBarPrefab;
                     king.faction = t.faction;
                     king.isEnemyKingTower = (owner != "Player");
-                    king.isPlayerKing = (owner == "Player");
+                    king.kingTowerType = (owner == "Player") ? KingTower.KingTowerType.PlayerKing : KingTower.KingTowerType.EnemyKing;
                 }
                 else
                 {

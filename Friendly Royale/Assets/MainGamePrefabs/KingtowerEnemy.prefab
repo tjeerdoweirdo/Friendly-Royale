@@ -203,11 +203,17 @@ MonoBehaviour:
   audioSource: {fileID: 7007379608946807589}
   attackSound: {fileID: 8300000, guid: bb2e2714f962491428dcb0b38598b251, type: 3}
   destroyHealthBarOnDeath: 1
-  extraObjectsToDestroyOnDeath: []
-  isPlayerKing: 0
+  extraObjectsToDestroyOnDeath:
+  - {fileID: 5520467473599663672}
+  kingTowerType: 1
+  baseMaxHealth: 1000
+  healthPerLevel: 400
+  levelHealthOverrides: 
   destroyAllUnitsOnDeath: 1
   destroyAllTowersOnDeath: 0
   extraKingObjectsToDestroyOnDeath: []
+  autoSyncSettings: 1
+  syncNow: 0
 --- !u!1 &5450293614001826482
 GameObject:
   m_ObjectHideFlags: 0

@@ -66,6 +66,11 @@ public class Tower : NetworkBehaviour
     private float lastAttackTime = 0f;
     protected TowerHealthBar healthBarInstance;
 
+    /// <summary>
+    /// Public accessor for current health (for UI and debugging)
+    /// </summary>
+    public int CurrentHealth => currentHealth;
+
     [Header("Death Cleanup")]
     [Tooltip("Destroy the spawned health bar UI when this tower dies")] public bool destroyHealthBarOnDeath = true;
     [Tooltip("Any additional scene objects to destroy when this tower dies (e.g., auxiliary visuals, markers)")] public List<GameObject> extraObjectsToDestroyOnDeath = new List<GameObject>();
@@ -326,6 +331,8 @@ public class Tower : NetworkBehaviour
     {
         if (dmg <= 0) return;
         
+        Debug.Log($"[Tower] {towerName} taking {dmg} damage. Current health: {currentHealth}/{maxHealth}");
+        
         if (isNetworkEnabled)
         {
             // Network path - only server can modify health
@@ -354,11 +361,27 @@ public class Tower : NetworkBehaviour
     
     private void ApplyDamage(int dmg)
     {
+        Debug.Log($"[Tower] ApplyDamage called on {towerName}. Damage: {dmg}, isNetworkEnabled: {isNetworkEnabled}, currentHealth: {currentHealth}");
+        
         if (isNetworkEnabled)
         {
-            if (networkIsDestroyed.Value) return;
+            Debug.Log($"[Tower] Network path - IsServer: {IsServer}");
+            if (networkIsDestroyed.Value) 
+            {
+                Debug.Log($"[Tower] {towerName} already destroyed, ignoring damage");
+                return;
+            }
+            int oldHealth = networkCurrentHealth.Value;
             networkCurrentHealth.Value = Mathf.Max(0, networkCurrentHealth.Value - dmg);
             currentHealth = networkCurrentHealth.Value;
+            Debug.Log($"[Tower] {towerName} network health: {oldHealth} -> {networkCurrentHealth.Value}");
+            
+            // Update health bar for network mode too
+            if (healthBarInstance != null)
+            {
+                Debug.Log($"[Tower] Updating health bar (network) from {oldHealth} to {currentHealth}");
+                healthBarInstance.UpdateHealth(currentHealth);
+            }
             
             if (networkCurrentHealth.Value <= 0)
             {
@@ -367,14 +390,28 @@ public class Tower : NetworkBehaviour
         }
         else
         {
+            Debug.Log($"[Tower] Single-player path for {towerName}");
+            int oldHealth = currentHealth;
             currentHealth -= dmg;
             if (currentHealth < 0) currentHealth = 0;
+            Debug.Log($"[Tower] {towerName} health: {oldHealth} -> {currentHealth}");
             
+            // Force health bar update
             if (healthBarInstance != null)
+            {
+                Debug.Log($"[Tower] Updating health bar from {oldHealth} to {currentHealth}");
                 healthBarInstance.UpdateHealth(currentHealth);
+            }
+            else
+            {
+                Debug.LogWarning($"[Tower] {towerName} has no health bar instance!");
+            }
 
             if (currentHealth <= 0)
+            {
+                Debug.Log($"[Tower] {towerName} health reached 0, calling Die()");
                 Die();
+            }
         }
     }
 

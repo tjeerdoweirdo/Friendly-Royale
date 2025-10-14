@@ -189,6 +189,9 @@ public class UnitHealth : NetworkBehaviour
     {
         if (amount <= 0) return;
         
+        string sourceName = source ? source.name : "Unknown";
+        Debug.Log($"[UnitHealth] {name} taking {amount} damage from {sourceName}. Current health: {currentHealth}/{maxHealth}");
+        
         if (isNetworkEnabled)
         {
             // Network path - only server can modify health

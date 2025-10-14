@@ -811,8 +811,9 @@ public class Unit : NetworkBehaviour
                 var splashTower = hit.GetComponentInParent<Tower>();
                 if (splashTower != null)
                 {
-                    if ((Unit.Faction)splashTower.faction != this.faction)
+                    if (splashTower.faction != this.faction)
                     {
+                        Debug.Log($"[Unit] {name} splash damage to tower {splashTower.towerName} for {attackDamage} damage");
                         splashTower.TakeDamage(attackDamage);
                         continue;
                     }
@@ -860,12 +861,19 @@ public class Unit : NetworkBehaviour
         var targetTower = currentTarget.GetComponentInParent<Tower>();
         if (targetTower != null)
         {
-            if ((Unit.Faction)targetTower.faction != this.faction)
+            Debug.Log($"[Unit] {name} attacking tower {targetTower.towerName}. My faction: {this.faction}, Target faction: {targetTower.faction}");
+            if (targetTower.faction != this.faction)
             {
+                Debug.Log($"[Unit] {name} dealing {attackDamage} damage to {targetTower.towerName}");
                 targetTower.TakeDamage(attackDamage);
                 PlayAttackSound();
                 PlayAttackAnimation();
                 return;
+            }
+            else
+            {
+                Debug.Log($"[Unit] {name} NOT attacking {targetTower.towerName} - same faction!");
+                return; // Don't attack same faction
             }
         }
 
@@ -873,6 +881,7 @@ public class Unit : NetworkBehaviour
         var targetHealth = currentTarget.GetComponent<UnitHealth>();
         if (targetHealth != null && targetHealth.IsAlive)
         {
+            Debug.Log($"[Unit] {name} dealing {attackDamage} damage to unit {currentTarget.name}");
             targetHealth.TakeDamage(attackDamage, gameObject);
             PlayAttackSound();
             PlayAttackAnimation();
