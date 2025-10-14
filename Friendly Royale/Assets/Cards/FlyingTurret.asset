@@ -23,7 +23,7 @@ MonoBehaviour:
   spellLevel: 1
   spellMaxLevel: 5
   coinCost: 3
-  baseHealth: 15
+  baseHealth: 25
   baseDamage: 10
   baseSpeed: 5
   baseRange: 5

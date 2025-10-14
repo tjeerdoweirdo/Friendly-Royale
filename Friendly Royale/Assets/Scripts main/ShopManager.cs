@@ -41,6 +41,20 @@ public class ShopManager : MonoBehaviour
 
     [Header("Upgrade pricing")]
     public int goldCostPerLevel = 100;
+    [Tooltip("Additional cost per King Tower level (linear scaling)")]
+    public int kingTowerBaseCost = 500;
+    public int kingTowerCostPerLevel = 250;
+    public int kingTowerMaxLevel = 10;
+
+    [Header("King Tower Shop Slot")]
+    [Tooltip("If true, the first shop slot will be reserved for King Tower upgrade.")]
+    public bool includeKingTowerInShop = true;
+    [Tooltip("Optional icon for King Tower in the shop.")]
+    public Sprite kingTowerIcon;
+    [Tooltip("Which index to place the King Tower entry in the shop.")]
+    public int kingTowerSlotIndex = 0;
+    [Tooltip("Optional dedicated prefab for the King Tower slot (use KingTowerShopEntryUI)")]
+    public GameObject kingTowerSlotPrefab;
 
     // Event for UI to listen to upgrades
     public event Action<Card, Arena, int> OnCardUpgraded;
@@ -76,8 +90,23 @@ public class ShopManager : MonoBehaviour
             shopSlotUIs = new GameObject[shopSlotCount];
             for (int i = 0; i < shopSlotCount; i++)
             {
-                var go = Instantiate(shopSlotPrefab, shopSlotParents[i]);
+                // Create default slot; if it's the reserved King Tower index and a custom prefab is provided,
+                // we'll replace it below
+                GameObject go = Instantiate(shopSlotPrefab, shopSlotParents[i]);
                 shopSlotUIs[i] = go;
+            }
+
+            // Replace reserved slot with dedicated King Tower prefab if provided
+            if (includeKingTowerInShop && kingTowerSlotPrefab != null)
+            {
+                int idx = Mathf.Clamp(kingTowerSlotIndex, 0, shopSlotCount - 1);
+                var parent = shopSlotParents[idx];
+                if (shopSlotUIs[idx] != null)
+                {
+                    Destroy(shopSlotUIs[idx]);
+                }
+                var ktGo = Instantiate(kingTowerSlotPrefab, parent);
+                shopSlotUIs[idx] = ktGo;
             }
         }
 
@@ -138,6 +167,15 @@ public class ShopManager : MonoBehaviour
         upgradable = upgradable.OrderBy(x => rng.Next()).ToList();
         for (int i = 0; i < shopSlotCount; i++)
         {
+            // Reserve a slot for King Tower if enabled
+            if (includeKingTowerInShop && i == Mathf.Clamp(kingTowerSlotIndex, 0, shopSlotCount - 1))
+            {
+                shopSlots[i].card = null; // we'll populate UI later
+                shopSlots[i].upgradeLimit = 1; // one purchase at a time
+                shopSlots[i].upgradesBought = 0;
+                continue;
+            }
+
             if (i < upgradable.Count)
             {
                 shopSlots[i].card = upgradable[i];
@@ -212,6 +250,39 @@ public class ShopManager : MonoBehaviour
                 continue;
             }
             var entry = go.GetComponent<EntryShopUI>();
+            // King Tower reserved slot
+            if (includeKingTowerInShop && i == Mathf.Clamp(kingTowerSlotIndex, 0, shopSlotCount - 1))
+            {
+                // If a dedicated prefab is used, try the dedicated UI first
+                var kt = go.GetComponent<KingTowerShopEntryUI>();
+                if (kt != null)
+                {
+                    // Use custom UI
+                    if (kt.iconImage != null) kt.iconImage.sprite = kingTowerIcon;
+                    kt.Refresh();
+                }
+                else if (entry != null)
+                {
+                    int kingLevel = GetKingTowerLevel();
+                    bool atMax = kingLevel >= Mathf.Max(1, kingTowerMaxLevel);
+                    int cost = atMax ? 0 : GetKingTowerUpgradeCost();
+                    entry.SetupGeneric("King Tower", kingTowerIcon, kingLevel, cost, () =>
+                    {
+                        if (TryUpgradeKingTower())
+                        {
+                            // Refresh to update level and cost display
+                            UpdateShopSlotUI();
+                        }
+                    }, showUpgradeLimit: false);
+                    entry.SetInteractable(!atMax && CanUpgradeKingTower());
+                }
+                else
+                {
+                    Debug.LogWarning($"ShopManager: EntryShopUI missing on slot {i} for King Tower entry.");
+                }
+                continue;
+            }
+
             if (entry != null && slot.card != null)
             {
                 int idx = i;
@@ -236,6 +307,7 @@ public class ShopManager : MonoBehaviour
             }
             else if (slot.card == null)
             {
+                // Remains empty if it's not the King Tower reserved slot
                 Debug.Log($"ShopManager: Slot {i} has no card assigned.");
             }
         }
@@ -325,6 +397,59 @@ public class ShopManager : MonoBehaviour
     {
         if (isShopVisible)
             CloseShop();
+    }
+
+    // --- King Tower Upgrade API ---
+    /// <summary>
+    /// Gets the current King Tower level (global).
+    /// </summary>
+    public int GetKingTowerLevel()
+    {
+        return PlayerProgress.Instance != null ? PlayerProgress.Instance.GetKingTowerLevel() : 1;
+    }
+
+    /// <summary>
+    /// Calculates the gold cost to upgrade the King Tower from current level to next.
+    /// </summary>
+    public int GetKingTowerUpgradeCost()
+    {
+        int level = GetKingTowerLevel();
+        return Mathf.Max(0, kingTowerBaseCost + (level - 1) * kingTowerCostPerLevel);
+    }
+
+    /// <summary>
+    /// Whether the King Tower can be upgraded (has not reached max level, enough gold).
+    /// </summary>
+    public bool CanUpgradeKingTower()
+    {
+        if (PlayerProgress.Instance == null) return false;
+        int lvl = GetKingTowerLevel();
+        if (lvl >= Mathf.Max(1, kingTowerMaxLevel)) return false;
+        return PlayerProgress.Instance.GetGold() >= GetKingTowerUpgradeCost();
+    }
+
+    /// <summary>
+    /// Attempts to purchase a King Tower level. Returns true on success.
+    /// </summary>
+    public bool TryUpgradeKingTower()
+    {
+        if (PlayerProgress.Instance == null) return false;
+        int lvl = GetKingTowerLevel();
+        if (lvl >= Mathf.Max(1, kingTowerMaxLevel))
+        {
+            Debug.Log("ShopManager: King Tower already at max level.");
+            return false;
+        }
+        int cost = GetKingTowerUpgradeCost();
+        if (!PlayerProgress.Instance.SpendGold(cost))
+        {
+            Debug.Log("ShopManager: Not enough gold to upgrade King Tower.");
+            return false;
+        }
+        PlayerProgress.Instance.SetKingTowerLevel(lvl + 1);
+        Debug.Log($"ShopManager: Upgraded King Tower to level {lvl + 1} for {cost} gold.");
+        // Optionally refresh shop UI or emit an event if you add one later
+        return true;
     }
 
     /// <summary>

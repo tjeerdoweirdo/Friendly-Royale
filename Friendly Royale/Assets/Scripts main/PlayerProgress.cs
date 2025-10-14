@@ -2,6 +2,7 @@ using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
 using Unity.Netcode;
+using Unity.Collections;
 
 [System.Serializable]
 public class CardLevelEntry
@@ -72,6 +73,7 @@ public class PlayerProgress : NetworkBehaviour
     private NetworkVariable<int> networkLosses = new NetworkVariable<int>(0);
     private NetworkVariable<int> networkWinStreak = new NetworkVariable<int>(0);
     private NetworkVariable<int> networkBestWinStreak = new NetworkVariable<int>(0);
+    private NetworkVariable<FixedString64Bytes> networkUsername = new NetworkVariable<FixedString64Bytes>(new FixedString64Bytes(""));
     
     // Network player tracking
     private static Dictionary<ulong, PlayerProgress> networkPlayerDict = new Dictionary<ulong, PlayerProgress>();
@@ -92,6 +94,7 @@ public class PlayerProgress : NetworkBehaviour
     private const string KEY_CARDLEVEL_PREFIX = "PP_CARDLEVELS_v2_"; // + arenaID
     private const string KEY_CARDSHARD_PREFIX = "PP_CARDSHARDS_v2_"; // + arenaID
     private const string KEY_UNLOCKED_CARDS = "PP_UNLOCKED_CARDS_v2"; // global unlocked card list (from chests/shop)
+    private const string KEY_KING_TOWER_LEVEL = "PP_KINGTOWER_LEVEL_v1"; // global King Tower level
 
     // username key
     private const string KEY_USERNAME = "PP_USERNAME_v1";
@@ -117,6 +120,7 @@ public class PlayerProgress : NetworkBehaviour
         networkCurrentTrophies.OnValueChanged += OnNetworkCurrentTrophiesChanged;
         networkHighestTrophies.OnValueChanged += OnNetworkHighestTrophiesChanged;
         networkGems.OnValueChanged += OnNetworkGemsChanged;
+        networkUsername.OnValueChanged += OnNetworkUsernameChanged;
         
         // If server, initialize network values from local values
         if (IsServer)
@@ -127,6 +131,11 @@ public class PlayerProgress : NetworkBehaviour
         else if (IsOwner)
         {
             SyncNetworkToLocal();
+            // If username not yet propagated, submit ours to server
+            if (string.IsNullOrEmpty(networkUsername.Value.ToString()) && !string.IsNullOrEmpty(username))
+            {
+                SubmitUsernameServerRpc(username);
+            }
         }
     }
     
@@ -140,6 +149,7 @@ public class PlayerProgress : NetworkBehaviour
         networkCurrentTrophies.OnValueChanged -= OnNetworkCurrentTrophiesChanged;
         networkHighestTrophies.OnValueChanged -= OnNetworkHighestTrophiesChanged;
         networkGems.OnValueChanged -= OnNetworkGemsChanged;
+        networkUsername.OnValueChanged -= OnNetworkUsernameChanged;
         
         // Remove from dictionary
         networkPlayerDict.Remove(OwnerClientId);
@@ -155,6 +165,7 @@ public class PlayerProgress : NetworkBehaviour
         networkCurrentTrophies.Value = currentTrophies;
         networkHighestTrophies.Value = highestTrophies;
         networkGems.Value = gems;
+        networkUsername.Value = new FixedString64Bytes(username ?? "");
     }
     
     private void SyncNetworkToLocal()
@@ -166,6 +177,11 @@ public class PlayerProgress : NetworkBehaviour
         currentTrophies = networkCurrentTrophies.Value;
         highestTrophies = networkHighestTrophies.Value;
         gems = networkGems.Value;
+        var netName = networkUsername.Value.ToString();
+        if (!string.IsNullOrEmpty(netName))
+        {
+            username = netName;
+        }
     }
     
     // Network variable change handlers
@@ -208,6 +224,15 @@ public class PlayerProgress : NetworkBehaviour
         if (IsOwner)
         {
             gems = newValue;
+        }
+    }
+    
+    private void OnNetworkUsernameChanged(FixedString64Bytes previousValue, FixedString64Bytes newValue)
+    {
+        if (IsOwner)
+        {
+            username = newValue.ToString();
+            SaveProgress();
         }
     }
     #endregion
@@ -290,6 +315,12 @@ public class PlayerProgress : NetworkBehaviour
         // load username (fallback to startingUsername)
         username = PlayerPrefs.GetString(KEY_USERNAME, startingUsername ?? "Player");
 
+        // Ensure a default King Tower level exists
+        if (!PlayerPrefs.HasKey(KEY_KING_TOWER_LEVEL))
+        {
+            PlayerPrefs.SetInt(KEY_KING_TOWER_LEVEL, 1);
+        }
+
         if (!PlayerPrefs.HasKey(KEY_UNLOCKED_ARENAS))
         {
             PlayerPrefs.SetString(KEY_UNLOCKED_ARENAS, "");
@@ -332,6 +363,37 @@ public class PlayerProgress : NetworkBehaviour
         PlayerPrefs.Save();
     }
 
+    #region King Tower Level (global)
+    /// <summary>
+    /// Returns the current King Tower level (global, not per arena). Defaults to 1.
+    /// </summary>
+    public int GetKingTowerLevel()
+    {
+        return Mathf.Max(1, PlayerPrefs.GetInt(KEY_KING_TOWER_LEVEL, 1));
+    }
+
+    /// <summary>
+    /// Sets the King Tower level (global, not per arena). Minimum level is 1.
+    /// </summary>
+    public void SetKingTowerLevel(int level)
+    {
+        level = Mathf.Max(1, level);
+        PlayerPrefs.SetInt(KEY_KING_TOWER_LEVEL, level);
+        PlayerPrefs.Save();
+        Debug.Log($"PlayerProgress: King Tower level set to {level}");
+    }
+
+    /// <summary>
+    /// Increases the King Tower level by the given amount (default +1).
+    /// </summary>
+    public void IncreaseKingTowerLevel(int by = 1)
+    {
+        if (by <= 0) return;
+        int cur = GetKingTowerLevel();
+        SetKingTowerLevel(cur + by);
+    }
+    #endregion
+
     #region Username helpers
     /// <summary>
     /// Set and persist username immediately.
@@ -346,6 +408,17 @@ public class PlayerProgress : NetworkBehaviour
         {
             username = newUsername;
         }
+        if (enableNetworking && IsSpawned)
+        {
+            if (IsServer)
+            {
+                networkUsername.Value = new FixedString64Bytes(username);
+            }
+            else if (IsOwner)
+            {
+                SubmitUsernameServerRpc(username);
+            }
+        }
         SaveProgress();
     }
 
@@ -354,6 +427,11 @@ public class PlayerProgress : NetworkBehaviour
     /// </summary>
     public string GetUsername()
     {
+        if (enableNetworking && IsSpawned)
+        {
+            var netName = networkUsername.Value.ToString();
+            if (!string.IsNullOrEmpty(netName)) return netName;
+        }
         return username;
     }
 
@@ -363,6 +441,17 @@ public class PlayerProgress : NetworkBehaviour
     public void ClearUsername()
     {
         username = "";
+        if (enableNetworking && IsSpawned)
+        {
+            if (IsServer)
+            {
+                networkUsername.Value = new FixedString64Bytes("");
+            }
+            else if (IsOwner)
+            {
+                SubmitUsernameServerRpc("");
+            }
+        }
         SaveProgress();
     }
     #endregion
@@ -676,6 +765,13 @@ public class PlayerProgress : NetworkBehaviour
         {
             networkHighestTrophies.Value = networkCurrentTrophies.Value;
         }
+        SaveProgress();
+    }
+    
+    [ServerRpc(RequireOwnership = true)]
+    private void SubmitUsernameServerRpc(string newUsername)
+    {
+        networkUsername.Value = new FixedString64Bytes(newUsername ?? "");
         SaveProgress();
     }
     

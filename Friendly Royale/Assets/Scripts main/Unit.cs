@@ -709,10 +709,7 @@ public class Unit : NetworkBehaviour
             Tower[] allTowers = UnityEngine.Object.FindObjectsByType<Tower>(UnityEngine.FindObjectsSortMode.None);
             foreach (var t in allTowers)
             {
-                var towerFaction = (t.ownerTag == "Player") ? Faction.Player : Faction.Enemy;
-                var building = t.GetComponent<Building>();
-                if (building != null)
-                    towerFaction = building.faction;
+                Faction towerFaction = (Faction)t.faction;
                 if (towerFaction == this.faction) continue;
                 float dist = Vector3.Distance(transform.position, t.transform.position);
                 if (dist > detectionRange) continue;
@@ -804,12 +801,22 @@ public class Unit : NetworkBehaviour
             ApplyEffectToTarget(currentTarget);
         }
 
-        // Splash attack (MegaKnight style)
+        // Splash attack (e.g., MegaKnight)
         if (isSplash && splashRadius > 0f)
         {
             Collider[] hits = Physics.OverlapSphere(currentTarget.position, splashRadius);
             foreach (var hit in hits)
             {
+                // Prefer damaging Tower first
+                var splashTower = hit.GetComponentInParent<Tower>();
+                if (splashTower != null)
+                {
+                    if ((Unit.Faction)splashTower.faction != this.faction)
+                    {
+                        splashTower.TakeDamage(attackDamage);
+                        continue;
+                    }
+                }
                 // Damage enemy units
                 if (hit.TryGetComponent<Unit>(out var unitTarget))
                 {
@@ -849,7 +856,20 @@ public class Unit : NetworkBehaviour
             return;
         }
 
-        // Melee/direct damage
+        // Prefer to damage Tower first (handles child colliders)
+        var targetTower = currentTarget.GetComponentInParent<Tower>();
+        if (targetTower != null)
+        {
+            if ((Unit.Faction)targetTower.faction != this.faction)
+            {
+                targetTower.TakeDamage(attackDamage);
+                PlayAttackSound();
+                PlayAttackAnimation();
+                return;
+            }
+        }
+
+        // Melee/direct damage vs Units
         var targetHealth = currentTarget.GetComponent<UnitHealth>();
         if (targetHealth != null && targetHealth.IsAlive)
         {
@@ -859,7 +879,7 @@ public class Unit : NetworkBehaviour
             return;
         }
 
-        // Try to damage Health (for buildings or towers)
+        // Generic building Health
         var healthComp = currentTarget.GetComponent<Health>();
         if (healthComp != null && !healthComp.isDead)
         {
@@ -867,18 +887,6 @@ public class Unit : NetworkBehaviour
             PlayAttackSound();
             PlayAttackAnimation();
             return;
-        }
-
-        // Try to damage Tower (legacy)
-        var targetTower = currentTarget.GetComponent<Tower>();
-        if (targetTower != null)
-        {
-            if (targetTower.GetComponent<Health>() == null)
-            {
-                targetTower.TakeDamage(attackDamage);
-                PlayAttackSound();
-                PlayAttackAnimation();
-            }
         }
     }
 

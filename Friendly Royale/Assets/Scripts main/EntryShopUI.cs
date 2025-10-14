@@ -73,6 +73,50 @@ public class EntryShopUI : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Generic setup for non-card entries (e.g., King Tower upgrade).
+    /// </summary>
+    public void SetupGeneric(string displayName, Sprite icon, int level, int cost, System.Action upgradeAction, bool showUpgradeLimit = false, int bought = 0, int limit = 0)
+    {
+        card = null; // no card
+        upgradesBought = bought;
+        upgradeLimit = limit;
+        upgradeCost = cost;
+        cardLevel = level;
+        onUpgrade = upgradeAction;
+
+        if (iconImage != null) iconImage.sprite = icon;
+        if (nameText != null) nameText.text = displayName;
+        if (upgradeCostText != null) upgradeCostText.text = $"Cost: {upgradeCost}";
+        if (levelText != null) levelText.text = $"Level: {cardLevel}";
+        if (upgradeLimitText != null)
+        {
+            if (showUpgradeLimit)
+                upgradeLimitText.text = $"Upgrades: {upgradesBought}/{upgradeLimit}";
+            else
+                upgradeLimitText.text = "";
+        }
+
+        // Hide rarity visuals if any
+        if (rarityPanel != null) rarityPanel.enabled = false;
+
+        if (upgradeButton != null)
+        {
+            upgradeButton.onClick.RemoveAllListeners();
+            upgradeButton.onClick.AddListener(OnUpgradeClicked);
+            // Default to enabled; caller can override via SetInteractable()
+            upgradeButton.interactable = true;
+        }
+    }
+
+    /// <summary>
+    /// Allows external control of upgrade button interactivity (e.g., disable when no gold or reached max level).
+    /// </summary>
+    public void SetInteractable(bool canClick)
+    {
+        if (upgradeButton != null) upgradeButton.interactable = canClick;
+    }
+
     void OnUpgradeClicked()
     {
         onUpgrade?.Invoke();

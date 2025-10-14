@@ -1,5 +1,6 @@
 using UnityEngine;
 using Unity.Netcode;
+using System.Collections.Generic;
 
 /// <summary>
 /// Basic tower behavior with optional network support:
@@ -64,10 +65,43 @@ public class Tower : NetworkBehaviour
     protected int currentHealth;
     private float lastAttackTime = 0f;
     protected TowerHealthBar healthBarInstance;
+
+    [Header("Death Cleanup")]
+    [Tooltip("Destroy the spawned health bar UI when this tower dies")] public bool destroyHealthBarOnDeath = true;
+    [Tooltip("Any additional scene objects to destroy when this tower dies (e.g., auxiliary visuals, markers)")] public List<GameObject> extraObjectsToDestroyOnDeath = new List<GameObject>();
+    
+    protected virtual void Awake()
+    {
+        // If Netcode is active and we have a NetworkObject, auto-enable networking to keep health in sync across clients
+        if (!enableNetworking && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+        {
+            var no = GetComponent<NetworkObject>();
+            if (no != null)
+            {
+                enableNetworking = true;
+                Debug.Log($"[Tower] Awake auto-enable networking for {towerName} (NetworkObject present)");
+            }
+            else
+            {
+                Debug.LogWarning($"[Tower] Netcode running but {towerName} has no NetworkObject. Health will not sync to clients.");
+            }
+        }
+    }
     
     protected virtual void Start()
     {
         currentHealth = maxHealth;
+
+        // Set faction automatically based on ownerTag if not explicitly configured
+        // Helps ensure enemy detection works across scenes/prefabs
+        if (string.Equals(ownerTag, "Player", System.StringComparison.OrdinalIgnoreCase))
+        {
+            faction = Unit.Faction.Player;
+        }
+        else if (string.Equals(ownerTag, "Enemy", System.StringComparison.OrdinalIgnoreCase))
+        {
+            faction = Unit.Faction.Enemy;
+        }
 
         if (healthBarPrefab != null)
         {
@@ -78,6 +112,10 @@ public class Tower : NetworkBehaviour
                 bool isEnemy = (faction == Unit.Faction.Enemy);
                 healthBarInstance.AttachTo(transform, maxHealth, towerName, isEnemy);
                 healthBarInstance.UpdateHealth(currentHealth);
+                if (healthBarInstance.slider == null)
+                {
+                    Debug.LogWarning($"[Tower] {towerName} health bar Slider is not assigned on the prefab - only text will update.");
+                }
             }
             else
             {
@@ -94,22 +132,36 @@ public class Tower : NetworkBehaviour
                 audioSource = gameObject.AddComponent<AudioSource>();
             }
         }
+
+        Debug.Log($"[Tower] Start -> {towerName}: ownerTag={ownerTag}, faction={faction}, maxHealth={maxHealth}");
     }
     
     public override void OnNetworkSpawn()
     {
-        if (isNetworkEnabled)
+        // If this object is part of a spawned network session, force-enable networking
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
         {
-            // Initialize network variables
-            if (IsServer)
-            {
-                networkCurrentHealth.Value = currentHealth;
-                networkIsDestroyed.Value = false;
-            }
-            
-            // Subscribe to network variable changes
-            networkCurrentHealth.OnValueChanged += OnNetworkHealthChanged;
-            networkIsDestroyed.OnValueChanged += OnNetworkDestroyedChanged;
+            enableNetworking = true;
+        }
+
+        if (!isNetworkEnabled) return;
+
+        // Initialize network variables (server authoritative)
+        if (IsServer)
+        {
+            networkCurrentHealth.Value = currentHealth;
+            networkIsDestroyed.Value = false;
+        }
+        
+        // Subscribe to network variable changes
+        networkCurrentHealth.OnValueChanged += OnNetworkHealthChanged;
+        networkIsDestroyed.OnValueChanged += OnNetworkDestroyedChanged;
+
+        // Immediately sync current value on spawn (clients won't get an event unless value changes)
+        currentHealth = networkCurrentHealth.Value;
+        if (healthBarInstance != null)
+        {
+            healthBarInstance.UpdateHealth(currentHealth);
         }
     }
     
@@ -212,6 +264,18 @@ public class Tower : NetworkBehaviour
             audioSource.PlayOneShot(attackSound);
         }
 
+        // Prefer damaging Tower if present (handles child colliders)
+        var targetTower = enemy.GetComponentInParent<Tower>();
+        if (targetTower != null && targetTower != this)
+        {
+            // Only damage enemies
+            if (targetTower.faction != this.faction)
+            {
+                targetTower.TakeDamage(damagePerShot);
+                return;
+            }
+        }
+
         // Melee/direct damage (like non-ranged Unit)
         var targetHealth = enemy.GetComponent<UnitHealth>();
         if (targetHealth != null && targetHealth.IsAlive)
@@ -226,16 +290,6 @@ public class Tower : NetworkBehaviour
         {
             healthComp.TakeDamage(damagePerShot);
             return;
-        }
-
-        // Try to damage Tower (legacy)
-        var targetTower = enemy.GetComponent<Tower>();
-        if (targetTower != null)
-        {
-            if (targetTower.GetComponent<Health>() == null)
-            {
-                targetTower.TakeDamage(damagePerShot);
-            }
         }
     }
 
@@ -330,6 +384,20 @@ public class Tower : NetworkBehaviour
     protected virtual void Die()
     {
         Debug.Log($"{towerName} destroyed!");
+        // Cleanup UI and extras
+        if (destroyHealthBarOnDeath && healthBarInstance != null)
+        {
+            Destroy(healthBarInstance.gameObject);
+            healthBarInstance = null;
+        }
+        if (extraObjectsToDestroyOnDeath != null)
+        {
+            foreach (var go in extraObjectsToDestroyOnDeath)
+            {
+                if (go != null) Destroy(go);
+            }
+            extraObjectsToDestroyOnDeath.Clear();
+        }
         Destroy(gameObject);
         // Optionally notify GameManager/MatchEnd here or override in KingTower
     }

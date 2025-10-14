@@ -23,6 +23,14 @@ public class GameManager : NetworkBehaviour
     [Tooltip("Scene to load after match ends.")]
     public string nextSceneName = "MainMenu";
 
+    [Header("Player Sides")] 
+    [Tooltip("If true, the Host will be Player1 in online matches; the Client will be Player2. In practice/offline, local is always Player1.")]
+    public bool hostIsPlayer1 = true;
+    [Tooltip("Computed at runtime: whether the local player is Player1.")]
+    public bool localIsPlayer1 = true;
+    [Tooltip("Computed at runtime: whether the local player is Player2.")]
+    public bool localIsPlayer2 = false;
+
     [Header("References (assign in inspector or auto-find)")]
     public TMP_Text timerText;
     public TMP_Text resultText;
@@ -63,6 +71,8 @@ public class GameManager : NetworkBehaviour
     void Start()
     {
         FindReferences();
+        // Establish sides and toggle AI depending on mode (practice vs online)
+        DeterminePlayerSidesAndAIMode();
         StartMatch();
         if (rewardPanel != null) rewardPanel.SetActive(false);
         if (continueButton != null)
@@ -73,30 +83,11 @@ public class GameManager : NetworkBehaviour
         }
     }
 
-    void FindReferences()
+    public override void OnNetworkSpawn()
     {
-        // UI: Prefer inspector, fallback to scene search
-        if (timerText == null)
-            timerText = UnityEngine.Object.FindFirstObjectByType<TMP_Text>();
-        if (resultText == null)
-            resultText = GameObject.Find("ResultText")?.GetComponent<TMP_Text>();
-        if (rewardPanel == null)
-            rewardPanel = GameObject.Find("RewardPanel");
-        if (rewardText == null && rewardPanel != null)
-            rewardText = rewardPanel.GetComponentInChildren<TMP_Text>(true);
-        if (continueButton == null)
-            continueButton = UnityEngine.Object.FindFirstObjectByType<Button>();
-
-        // Towers: Only use inspector assignments (no auto-find fallback)
-        // If towers are not assigned, warn the user
-        if (playerKingTower == null)
-        {
-            Debug.LogWarning("Player King Tower is not assigned! Please assign it in the GameManager inspector.");
-        }
-        if (enemyKingTower == null)
-        {
-            Debug.LogWarning("Enemy King Tower is not assigned! Please assign it in the GameManager inspector.");
-        }
+        base.OnNetworkSpawn();
+        // When Netcode initializes, recompute sides based on host/client role
+        DeterminePlayerSidesAndAIMode();
     }
 
     void Update()
@@ -140,10 +131,105 @@ public class GameManager : NetworkBehaviour
         UpdateTimerUI();
     }
 
+    void FindReferences()
+    {
+        // UI: Prefer inspector, fallback to scene search
+        if (timerText == null)
+            timerText = UnityEngine.Object.FindFirstObjectByType<TMP_Text>();
+        if (resultText == null)
+            resultText = GameObject.Find("ResultText")?.GetComponent<TMP_Text>();
+        if (rewardPanel == null)
+            rewardPanel = GameObject.Find("RewardPanel");
+        if (rewardText == null && rewardPanel != null)
+            rewardText = rewardPanel.GetComponentInChildren<TMP_Text>(true);
+        if (continueButton == null)
+            continueButton = UnityEngine.Object.FindFirstObjectByType<Button>();
+
+        // Towers: Only use inspector assignments (no auto-find fallback)
+        // If towers are not assigned, warn the user
+        if (playerKingTower == null)
+        {
+            Debug.LogWarning("Player King Tower is not assigned! Please assign it in the GameManager inspector.");
+        }
+        if (enemyKingTower == null)
+        {
+            Debug.LogWarning("Enemy King Tower is not assigned! Please assign it in the GameManager inspector.");
+        }
+    }
+
     // Helper method to check if we're in network mode
     private bool IsNetworkActive()
     {
         return NetworkManager.Singleton != null && (NetworkManager.Singleton.IsHost || NetworkManager.Singleton.IsClient);
+    }
+
+    // Helper to check if we are in an offline/practice mode
+    private bool IsOfflineOrPracticeMode()
+    {
+        // Prefer GameModeManager when available
+        try
+        {
+            if (GameModeManager.Instance != null)
+            {
+                return GameModeManager.Instance.IsOfflineMode();
+            }
+        }
+        catch { /* ignore if GameModeManager not present */ }
+
+        // Fallback: if Netcode isn't active, treat as offline/practice
+        return !IsNetworkActive();
+    }
+
+    private void DeterminePlayerSidesAndAIMode()
+    {
+        bool offline = IsOfflineOrPracticeMode();
+        if (offline)
+        {
+            localIsPlayer1 = true;
+            localIsPlayer2 = false;
+            ToggleEnemyBot(true);
+        }
+        else if (IsNetworkActive())
+        {
+            bool isHost = NetworkManager.Singleton.IsHost;
+            localIsPlayer1 = isHost ? hostIsPlayer1 : !hostIsPlayer1;
+            localIsPlayer2 = !localIsPlayer1;
+            ToggleEnemyBot(false);
+        }
+        else
+        {
+            // Safe default
+            localIsPlayer1 = true;
+            localIsPlayer2 = false;
+            ToggleEnemyBot(true);
+        }
+
+        Debug.Log($"[GameManager] Local side: {(localIsPlayer1 ? "Player1" : "Player2")} | EnemyBot: {(offline ? "ENABLED" : "DISABLED")}");
+    }
+
+    private void ToggleEnemyBot(bool enable)
+    {
+        try
+        {
+            // Include inactive objects so we can enable their scripts too
+            var bots = UnityEngine.Object.FindObjectsByType<EnemyBot>(FindObjectsSortMode.None);
+            if (bots == null || bots.Length == 0)
+            {
+                Debug.LogWarning("[GameManager] No EnemyBot found in scene to toggle. For practice mode, add an EnemyBot to the scene.");
+                return;
+            }
+            foreach (var bot in bots)
+            {
+                if (bot == null) continue;
+                // Ensure the GameObject is active as well as the component
+                if (bot.gameObject != null) bot.gameObject.SetActive(enable);
+                bot.enabled = enable;
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[GameManager] ToggleEnemyBot encountered an issue: {e.Message}");
+        }
     }
 
     public void StartMatch()
@@ -301,7 +387,6 @@ public class GameManager : NetworkBehaviour
     private void HandleLocalMatchEnd(MatchResult result, string reason = "")
     {
         // This is essentially the same as the original EndMatch (single-player) but called locally by all clients
-        if (resultShown) return; // Safety check
 
         // Mark local flags so local UI won't re-run
         resultShown = true;
@@ -354,7 +439,7 @@ public class GameManager : NetworkBehaviour
         {
             resultText.gameObject.SetActive(true);
             string statusText = result == MatchResult.Win ? "VICTORY" : result == MatchResult.Draw ? "DRAW" : "DEFEAT";
-            resultText.text = $"{statusText}\n{reason}";
+            resultText.text = string.IsNullOrEmpty(reason) ? statusText : ($"{statusText}\n{reason}");
         }
 
         if (pauseOnEnd) Time.timeScale = 0f;

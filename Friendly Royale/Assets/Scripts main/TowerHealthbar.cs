@@ -23,6 +23,7 @@ public class TowerHealthBar : MonoBehaviour
     int maxHealth = 1;
     int currentHealth = 1;
     public Vector3 offset = new Vector3(0f, 2f, 0f);
+    private Camera cachedCamera;
 
     /// <summary>
     /// Attach the UI to a world target and configure max HP.
@@ -74,7 +75,25 @@ public class TowerHealthBar : MonoBehaviour
             return;
         }
 
-        Camera cam = Camera.main;
+        // Resolve an active camera: prefer Camera.main, otherwise find any enabled camera
+        if (cachedCamera == null || !cachedCamera.isActiveAndEnabled)
+        {
+            cachedCamera = Camera.main;
+            if (cachedCamera == null)
+            {
+                var cams = FindObjectsByType<Camera>(FindObjectsSortMode.None);
+                foreach (var c in cams)
+                {
+                    if (c != null && c.isActiveAndEnabled)
+                    {
+                        cachedCamera = c;
+                        break;
+                    }
+                }
+            }
+        }
+
+        var cam = cachedCamera;
         if (cam == null)
         {
             // no camera, hide UI

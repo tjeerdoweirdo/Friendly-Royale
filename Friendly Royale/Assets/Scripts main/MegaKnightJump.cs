@@ -128,27 +128,28 @@ public class MegaKnightJump : MonoBehaviour
             return;
         }
 
-        // Try generic Health
+        // Prefer Tower over generic Health to keep a single HP source for towers
+        Tower tw = target.GetComponentInParent<Tower>();
+        if (tw != null && IsEnemy(target))
+        {
+            tw.TakeDamage(meleeDamage);
+            return;
+        }
+
+        // Try generic Health (non-tower buildings)
         Health h = target.GetComponent<Health>();
-        if (h != null && !h.isDead)
+        if (h != null && !h.isDead && IsEnemy(target))
         {
             h.TakeDamage(meleeDamage);
             return;
         }
 
-        // Try UnitHealth
+        // Try UnitHealth (non-Unit wrappers)
         UnitHealth uh = target.GetComponent<UnitHealth>();
-        if (uh != null && uh.IsAlive)
+        if (uh != null && uh.IsAlive && IsEnemy(target))
         {
             uh.TakeDamage(meleeDamage, gameObject);
             return;
-        }
-
-        // Try Tower
-        Tower tw = target.GetComponent<Tower>();
-        if (tw != null)
-        {
-            tw.TakeDamage(meleeDamage);
         }
     }
 
@@ -331,27 +332,28 @@ public class MegaKnightJump : MonoBehaviour
                 continue;
             }
 
-            // Try generic Health
+            // Prefer Tower over generic Health so tower HP/Death is consistent
+            Tower tw = hit.GetComponentInParent<Tower>();
+            if (tw != null && IsEnemy(hit.gameObject))
+            {
+                tw.TakeDamage(splashDamage);
+                continue;
+            }
+
+            // Then generic Health (non-tower objects)
             Health h = hit.GetComponent<Health>();
-            if (h != null && !h.isDead)
+            if (h != null && !h.isDead && IsEnemy(hit.gameObject))
             {
                 h.TakeDamage(splashDamage);
                 continue;
             }
 
-            // Try UnitHealth
+            // Then UnitHealth
             UnitHealth uh = hit.GetComponent<UnitHealth>();
-            if (uh != null && uh.IsAlive)
+            if (uh != null && uh.IsAlive && IsEnemy(hit.gameObject))
             {
                 uh.TakeDamage(splashDamage, gameObject);
                 continue;
-            }
-
-            // Try Tower
-            Tower tw = hit.GetComponent<Tower>();
-            if (tw != null)
-            {
-                tw.TakeDamage(splashDamage);
             }
         }
     }
@@ -403,5 +405,27 @@ public class MegaKnightJump : MonoBehaviour
 
         Gizmos.color = Color.red;
         Gizmos.DrawWireSphere(transform.position, splashRadius);
+    }
+
+    // Determines if the target belongs to the opposing faction.
+    // Checks Unit/Tower on self and parents to handle colliders on child objects.
+    bool IsEnemy(GameObject targetGO)
+    {
+        if (targetGO == null) return false;
+
+        // Direct components
+        var u = targetGO.GetComponent<Unit>();
+        if (u != null) return u.faction != unit.faction;
+        var tw = targetGO.GetComponent<Tower>();
+        if (tw != null) return tw.faction != unit.faction;
+
+        // Parent lookup (common when colliders are on children)
+        u = targetGO.GetComponentInParent<Unit>();
+        if (u != null) return u.faction != unit.faction;
+        tw = targetGO.GetComponentInParent<Tower>();
+        if (tw != null) return tw.faction != unit.faction;
+
+        // Unknown allegiance: do not damage to avoid friendly fire
+        return false;
     }
 }
