@@ -8,7 +8,7 @@ public class UnitHealth : NetworkBehaviour
 {
     [Header("Network Settings")]
     [Tooltip("Enable networking for this health component")]
-    public bool enableNetworking = false;
+    public bool enableNetworking = true;
     
     [Header("Health")]
     public int maxHealth = 1000;

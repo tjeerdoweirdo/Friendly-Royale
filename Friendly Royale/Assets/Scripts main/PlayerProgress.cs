@@ -34,7 +34,7 @@ public class PlayerProgress : NetworkBehaviour
 {
     [Header("Network Configuration")]
     [Tooltip("Enable networking for this component. When disabled, works as single-player component.")]
-    public bool enableNetworking = false;
+    public bool enableNetworking = true;
     
     public event System.Action<int> OnGoldChanged;
     public event System.Action<int> OnTrophiesChanged;

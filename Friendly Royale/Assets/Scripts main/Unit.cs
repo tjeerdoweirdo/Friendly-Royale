@@ -23,7 +23,7 @@ public class Unit : NetworkBehaviour
 
     [Header("Network Settings")]
     [Tooltip("Enable networking for this unit")]
-    public bool enableNetworking = false;
+    public bool enableNetworking = true;
     
     [Header("Faction")]
     public Faction faction = Faction.Player;

@@ -22,7 +22,7 @@ public class CardSpawner : NetworkBehaviour
 
     [Header("Network Settings")]
     [Tooltip("Enable networking for card spawning")]
-    public bool enableNetworking = false;
+    public bool enableNetworking = true;
     
     // Network state
     private bool isNetworkEnabled => enableNetworking && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;

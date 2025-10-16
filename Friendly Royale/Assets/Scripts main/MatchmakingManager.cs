@@ -167,6 +167,10 @@ public class MatchmakingManager : MonoBehaviour
     private bool isPracticeStarting = false;
     private float practiceStartTime;
     
+    // Host-host stalemate breaker
+    private float lastHostSwitchAttemptTime = 0f;
+    private const float HostSwitchIntervalSeconds = 4f;
+    
     // Queue count refresh control
     private Coroutine queueCountCoroutine;
     private float queueCountRefreshInterval = 10f;
@@ -769,7 +773,12 @@ public class MatchmakingManager : MonoBehaviour
             yield return new WaitForSeconds(lobbyPollDelaySeconds);
         }
         
-        // No suitable lobby found, create one
+        // No suitable lobby found, wait a short randomized delay to reduce simultaneous lobby creation races, then create one
+        {
+            float jitterDelay = Random.Range(0.2f, 0.8f);
+            yield return new WaitForSeconds(jitterDelay);
+        }
+        // Create a new lobby for this arena
         string playerUsername = GetPlayerUsername();
         
         var createOptions = new CreateLobbyOptions
@@ -879,6 +888,16 @@ public class MatchmakingManager : MonoBehaviour
 
                 // Successful poll - gently reduce delay toward minimum
                 lobbyPollDelaySeconds = Mathf.Max(LobbyPollMinDelay, lobbyPollDelaySeconds * 0.9f);
+
+                // If we are hosting our own lobby and it's still not full, occasionally look for another
+                // same-arena lobby to join. This breaks the "both players created a lobby" deadlock.
+                bool weAreHost = false;
+                try { weAreHost = currentLobby.HostId == AuthenticationService.Instance.PlayerId; } catch { }
+                if (weAreHost && (Time.time - lastHostSwitchAttemptTime) > HostSwitchIntervalSeconds)
+                {
+                    lastHostSwitchAttemptTime = Time.time;
+                    yield return StartCoroutine(ConsiderSwitchToExistingLobby());
+                }
             }
             else
             {
@@ -902,6 +921,78 @@ public class MatchmakingManager : MonoBehaviour
 
         // Clear handle when loop ends
         pollLobbyCoroutine = null;
+    }
+
+    IEnumerator ConsiderSwitchToExistingLobby()
+    {
+        // Query for open lobbies in the same arena; if found one hosted by someone else with a free slot, leave ours and join theirs.
+        var queryOptions = new QueryLobbiesOptions
+        {
+            Count = 20,
+            Filters = new List<QueryFilter>
+            {
+                new QueryFilter(QueryFilter.FieldOptions.AvailableSlots, "1", QueryFilter.OpOptions.GE)
+            }
+        };
+
+        var response = LobbyService.Instance.QueryLobbiesAsync(queryOptions);
+        yield return new WaitUntil(() => response.IsCompleted);
+        if (response.Exception != null || response.Result == null)
+        {
+            yield break; // silent fail
+        }
+
+        string myPlayerId = string.Empty;
+        try { myPlayerId = AuthenticationService.Instance.PlayerId; } catch { }
+        string arenaId = selectedArena != null ? selectedArena.arenaID : null;
+        if (string.IsNullOrEmpty(arenaId)) yield break;
+
+        var candidates = response.Result.Results
+            .Where(l => l != null && l.Id != (currentLobby?.Id ?? "") && l.Data != null && l.Data.ContainsKey("arena")
+                        && l.Data["arena"].Value == arenaId && (l.MaxPlayers - (l.Players?.Count ?? 0) > 0))
+            .ToList();
+
+        if (candidates.Count == 0) yield break;
+
+        var target = candidates[0];
+
+        // Prepare join options
+        string currentPlayerUsername = GetPlayerUsername();
+        int playerTrophies = playerProgress?.trophies ?? 0;
+        var joinOptions = new JoinLobbyByIdOptions
+        {
+            Player = new Unity.Services.Lobbies.Models.Player
+            {
+                Data = new Dictionary<string, PlayerDataObject>
+                {
+                    {"username", new PlayerDataObject(PlayerDataObject.VisibilityOptions.Public, currentPlayerUsername)},
+                    {"trophies", new PlayerDataObject(PlayerDataObject.VisibilityOptions.Public, playerTrophies.ToString())},
+                    {"deckSize", new PlayerDataObject(PlayerDataObject.VisibilityOptions.Public, currentDeck.Count.ToString())}
+                }
+            }
+        };
+
+        // Leave our own lobby first
+        if (currentLobby != null)
+        {
+            var leaveTask = LobbyService.Instance.RemovePlayerAsync(currentLobby.Id, myPlayerId);
+            yield return new WaitUntil(() => leaveTask.IsCompleted);
+            // swallow any exception silently
+            currentLobby = null;
+        }
+
+        var joinResp = LobbyService.Instance.JoinLobbyByIdAsync(target.Id, joinOptions);
+        yield return new WaitUntil(() => joinResp.IsCompleted);
+        if (joinResp.Exception == null)
+        {
+            currentLobby = joinResp.Result;
+            SetStatus("Switched to existing lobby to pair faster...");
+        }
+        else
+        {
+            // If join failed, let the outer loop re-create a lobby on next iteration
+            Debug.LogWarning($"[Matchmaking] Switch-to-existing join failed: {joinResp.Exception?.Message}");
+        }
     }
 
     IEnumerator ArenaQueueLoop()

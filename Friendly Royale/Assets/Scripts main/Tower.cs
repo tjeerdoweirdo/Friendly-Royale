@@ -26,7 +26,7 @@ public class Tower : NetworkBehaviour
 
     [Header("Network Settings")]
     [Tooltip("Enable networking for this tower")]  
-    public bool enableNetworking = false;
+    public bool enableNetworking = true;
     
     [Header("Faction")]
     public Unit.Faction faction;
