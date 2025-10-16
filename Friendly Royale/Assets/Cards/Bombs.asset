@@ -18,6 +18,7 @@ MonoBehaviour:
   cardType: 0
   rarity: 0
   unlockArenaID: Tutorial
+  alwaysUnlocked: 1
   unitPrefab: {fileID: 3177070640604953242, guid: 54bdb768e481c70498867d973f93d502, type: 3}
   spellAsset: {fileID: 0}
   spellLevel: 1

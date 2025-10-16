@@ -44,8 +44,11 @@ public class Tower : NetworkBehaviour
         NetworkVariableWritePermission.Server
     );
     
-    // Network state
-    private bool isNetworkEnabled => enableNetworking && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
+    // Network state (only treat as network-enabled if transport is listening AND we are actually a server or client)
+    private bool isNetworkEnabled => enableNetworking
+        && NetworkManager.Singleton != null
+        && NetworkManager.Singleton.IsListening
+        && (NetworkManager.Singleton.IsServer || NetworkManager.Singleton.IsClient);
 
     [Header("King Tower Settings")]
     [Tooltip("Check if this tower is the enemy king tower.")]
@@ -91,14 +94,19 @@ public class Tower : NetworkBehaviour
                 Debug.LogWarning($"[Tower] Netcode running but {towerName} has no NetworkObject. Health will not sync to clients.");
             }
         }
-    }
-    
-    protected virtual void Start()
-    {
-        currentHealth = maxHealth;
 
-        // Set faction automatically based on ownerTag if not explicitly configured
-        // Helps ensure enemy detection works across scenes/prefabs
+        // If game is explicitly offline / practice, force disable networking to avoid RPC path doing nothing.
+        var gmMode = GameModeManager.Instance;
+        if (gmMode != null && gmMode.IsOfflineMode())
+        {
+            if (enableNetworking)
+            {
+                Debug.Log($"[Tower] Disabling networking for {towerName} because game is offline/practice.");
+            }
+            enableNetworking = false;
+        }
+
+        // Perform early faction assignment here (was only in Start) so any early spawns / unit target scans post-Awake see correct faction
         if (string.Equals(ownerTag, "Player", System.StringComparison.OrdinalIgnoreCase))
         {
             faction = Unit.Faction.Player;
@@ -107,6 +115,13 @@ public class Tower : NetworkBehaviour
         {
             faction = Unit.Faction.Enemy;
         }
+        // Do NOT set currentHealth here yet because derived classes (KingTower) may adjust maxHealth before calling base.Start().
+    }
+    
+    protected virtual void Start()
+    {
+        currentHealth = maxHealth;
+        // Faction already set in Awake (kept here previously) – removed duplication.
 
         if (healthBarPrefab != null)
         {
@@ -228,27 +243,30 @@ public class Tower : NetworkBehaviour
 
     protected virtual void Attack(GameObject enemy)
     {
-        if (isNetworkEnabled)
+        if (!isNetworkEnabled)
         {
-            // Network path - only server can attack
-            if (IsServer)
-            {
-                ExecuteAttack(enemy);
-            }
-            else
-            {
-                // Request attack from server
-                NetworkObject enemyNetworkObject = enemy.GetComponent<NetworkObject>();
-                if (enemyNetworkObject != null)
-                {
-                    AttackServerRpc(enemyNetworkObject.NetworkObjectId);
-                }
-            }
+            ExecuteAttack(enemy); // local fallback
+            return;
+        }
+
+        // Network path
+        if (IsServer)
+        {
+            ExecuteAttack(enemy);
         }
         else
         {
-            // Single-player path
-            ExecuteAttack(enemy);
+            NetworkObject enemyNetworkObject = enemy.GetComponent<NetworkObject>();
+            if (enemyNetworkObject != null)
+            {
+                AttackServerRpc(enemyNetworkObject.NetworkObjectId);
+            }
+            else
+            {
+                // Fallback: if server object missing or not networked properly, execute locally to avoid silent failure in practice
+                Debug.LogWarning($"[Tower] {towerName} could not find enemy NetworkObject for RPC attack; executing locally fallback.");
+                ExecuteAttack(enemy);
+            }
         }
     }
     
@@ -330,28 +348,52 @@ public class Tower : NetworkBehaviour
     public virtual void TakeDamage(int dmg)
     {
         if (dmg <= 0) return;
-        
-        Debug.Log($"[Tower] {towerName} taking {dmg} damage. Current health: {currentHealth}/{maxHealth}");
-        
-        if (isNetworkEnabled)
+
+        // Global arm check: avoid applying damage before scene auto configuration finalizes factions.
+        if (!TowerSceneAutoConfigurator.DamageArmed)
         {
-            // Network path - only server can modify health
-            if (IsServer)
+            // Failsafe: if damage is coming in but damage isn't armed within a short time window, force arm so gameplay isn't stuck.
+            _firstUnarmedDamageTime ??= Time.time;
+            float elapsed = Time.time - _firstUnarmedDamageTime.Value;
+            if (elapsed > 2f)
             {
-                ApplyDamage(dmg);
+                TowerSceneAutoConfigurator.ForceArmDamage($"Failsafe after {elapsed:F2}s (tower {towerName} receiving live damage attempts)");
             }
             else
             {
-                // Request damage from server
-                TakeDamageServerRpc(dmg);
+                Debug.Log($"[Tower] {towerName} received damage {dmg} before DamageArmed (elapsed {elapsed:F2}s); temporarily ignoring until armed.");
+                return; // skip without applying until armed or failsafe triggers
             }
+        }
+    Debug.Log($"[Tower] {towerName} taking {dmg} damage. Current health: {currentHealth}/{maxHealth} (net={isNetworkEnabled}, server={IsServer}, listening={ (NetworkManager.Singleton!=null && NetworkManager.Singleton.IsListening)} )");
+
+        if (!isNetworkEnabled)
+        {
+            ApplyDamage(dmg);
+            return;
+        }
+
+        // Network-enabled path
+        if (IsServer)
+        {
+            ApplyDamage(dmg);
         }
         else
         {
-            // Single-player path
-            ApplyDamage(dmg);
+            bool hasNet = NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
+            bool serverUp = hasNet && NetworkManager.Singleton.IsServer;
+            if (!hasNet || !serverUp)
+            {
+                Debug.LogWarning($"[Tower] {towerName} net flag ON but no authoritative server -> local damage fallback.");
+                ApplyDamage(dmg);
+                return;
+            }
+            TakeDamageServerRpc(dmg);
         }
     }
+
+    // Static timestamp for first unarmed damage observation
+    private static float? _firstUnarmedDamageTime = null;
     
     [ServerRpc(RequireOwnership = false)]
     private void TakeDamageServerRpc(int dmg)

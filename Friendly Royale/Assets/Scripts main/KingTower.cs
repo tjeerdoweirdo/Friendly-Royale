@@ -32,12 +32,39 @@ public class KingTower : Tower
     [Header("Auto-Sync Settings")]
     [Tooltip("If enabled, automatically sets ownerTag and faction based on King Tower Type selection")]
     public bool autoSyncSettings = true;
+
+    [Header("Networking Override")]
+    [Tooltip("Force this KingTower to operate purely locally (no Netcode sync) even if a NetworkManager exists.")]
+    public bool forceLocal = true;
     
 #if UNITY_EDITOR
     [Space]
     [Tooltip("Click to manually sync ownerTag and faction to match King Tower Type")]
     public bool syncNow = false;
 #endif
+
+    // Readiness flag to guard early damage attempts during scene load
+    private bool initialized = false;
+    private int bufferedPreInitDamage = 0;
+
+    protected override void Awake()
+    {
+        // Run Tower base Awake first for networking + early faction from ownerTag
+        base.Awake();
+        // If auto sync is enabled, ensure ownerTag/faction are correct ASAP (before other Units start scanning)
+        if (autoSyncSettings)
+        {
+            ownerTag = isPlayerKing ? "Player" : "Enemy";
+            faction = isPlayerKing ? Unit.Faction.Player : Unit.Faction.Enemy;
+        }
+        if (forceLocal && enableNetworking)
+        {
+            Debug.Log("[KingTower] forceLocal active -> disabling networking for this KingTower instance.");
+            enableNetworking = false; // ensures damage + health are handled immediately and locally
+        }
+        // Provide an early debug trace
+        Debug.Log($"[KingTower] Awake -> {towerName}: ownerTag={ownerTag} faction={faction} autoSync={autoSyncSettings}");
+    }
 
     protected override void Start()
     {
@@ -66,6 +93,14 @@ public class KingTower : Tower
         maxHealth = Mathf.Max(1, computedMax);
         base.Start();
         Debug.Log($"[KingTower] Start -> {towerName}: kingTowerType={kingTowerType}, ownerTag={ownerTag}, faction={faction}, level={level}, maxHealth={maxHealth}");
+
+        initialized = true;
+        if (bufferedPreInitDamage > 0)
+        {
+            Debug.Log($"[KingTower] Applying buffered damage {bufferedPreInitDamage} after initialization.");
+            base.TakeDamage(bufferedPreInitDamage);
+            bufferedPreInitDamage = 0;
+        }
     }
 
 #if UNITY_EDITOR
@@ -130,6 +165,13 @@ public class KingTower : Tower
     /// </summary>
     public override void TakeDamage(int dmg)
     {
+        if (!initialized)
+        {
+            // Buffer damage until Start completes to prevent "invulnerable on scene load" race
+            bufferedPreInitDamage += dmg;
+            Debug.Log($"[KingTower] Received {dmg} damage before initialization complete. Buffering total={bufferedPreInitDamage}.");
+            return;
+        }
         Debug.Log($"[KingTower] {towerName} taking {dmg} damage! Current health BEFORE: {currentHealth}/{maxHealth}, Faction: {faction}");
         base.TakeDamage(dmg);
         Debug.Log($"[KingTower] {towerName} health AFTER damage: {currentHealth}/{maxHealth}");

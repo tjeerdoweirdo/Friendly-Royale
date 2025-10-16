@@ -18,7 +18,11 @@ MonoBehaviour:
   cardType: 1
   rarity: 3
   unlockArenaID: Tutorial
+  alwaysUnlocked: 1
   unitPrefab: {fileID: 3213480019466655473, guid: aea60f3e24e1e1042b6a989dbefaaab4, type: 3}
+  spellAsset: {fileID: 0}
+  spellLevel: 1
+  spellMaxLevel: 5
   coinCost: 7
   baseHealth: 50
   baseDamage: 10
@@ -27,6 +31,17 @@ MonoBehaviour:
   baseAttackCooldown: 1
   maxLevel: 10
   description: The Furnace spawn bombs that can stop pushes
+  unitRole: 0
+  effectStat: 0
+  effectAmount: 0
+  effectDuration: 3
+  effectMode: 0
+  auraRadius: 3
+  auraInterval: 1
+  isSwarm: 0
+  swarmCount: 3
+  swarmSpacing: 1.5
+  swarmFormation: 0
   buildingType: 1
   buildingLifetime: 20
   buildingHpDecayPerSecond: 1

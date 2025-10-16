@@ -24,6 +24,9 @@ public class ArenaManager : MonoBehaviour
             if (!PlayerProgress.Instance.IsArenaUnlocked(arenas[0].arenaID))
                 PlayerProgress.Instance.UnlockArena(arenas[0].arenaID);
         }
+
+        // Also auto-unlock any arenas the player qualifies for by trophies
+        EnsureArenasUnlockedByTrophies();
     }
 
     public List<Arena> GetAllArenas() => arenas;
@@ -53,5 +56,22 @@ public class ArenaManager : MonoBehaviour
             return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// Unlock all arenas for which the player meets the trophy requirement.
+    /// Safe to call repeatedly.
+    /// </summary>
+    public void EnsureArenasUnlockedByTrophies()
+    {
+        if (arenas == null) return;
+        int trophies = PlayerProgress.Instance.trophies;
+        foreach (var arena in arenas)
+        {
+            if (arena != null && trophies >= arena.trophyRequirement && !PlayerProgress.Instance.IsArenaUnlocked(arena.arenaID))
+            {
+                PlayerProgress.Instance.UnlockArena(arena.arenaID);
+            }
+        }
     }
 }

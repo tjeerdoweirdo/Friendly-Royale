@@ -180,7 +180,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   isFlyingUnit: 0
   canAttackAirUnits: 1
-  enableNetworking: 0
+  enableNetworking: 1
   faction: 0
   unitRole: 3
   effectStat: 4
@@ -232,6 +232,11 @@ MonoBehaviour:
   attackClip: {fileID: 8300000, guid: 54d791dc287c98f4488411e84c9fb0df, type: 3}
   movementClip: {fileID: 8300000, guid: 4b073e83b168f4e41b11e4b9562ccaa2, type: 3}
   movementPlayThreshold: 0.2
+  animator: {fileID: 0}
+  attackAnimationClip: {fileID: 0}
+  moveAnimationClip: {fileID: 0}
+  idleAnimationClip: {fileID: 0}
+  useAttackAnimation: 1
   health: {fileID: 0}
 --- !u!195 &-6872577294610788369
 NavMeshAgent:

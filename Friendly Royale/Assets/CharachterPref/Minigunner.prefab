@@ -351,6 +351,7 @@ MonoBehaviour:
   auraRadius: 3
   auraInterval: 1
   effectPrefab: {fileID: 0}
+  auraRangeIndicatorPrefab: {fileID: 0}
   moveSpeed: 2
   attackRange: 5
   attackDamage: 5
@@ -392,6 +393,11 @@ MonoBehaviour:
   attackClip: {fileID: 8300000, guid: f0a385cbce751ac43845d62987e8c055, type: 3}
   movementClip: {fileID: 8300000, guid: a2fc6e018b1ab4248b0fd9cb662b67a9, type: 3}
   movementPlayThreshold: 0.2
+  animator: {fileID: 0}
+  attackAnimationClip: {fileID: 0}
+  moveAnimationClip: {fileID: 0}
+  idleAnimationClip: {fileID: 0}
+  useAttackAnimation: 1
   health: {fileID: 0}
 --- !u!195 &-3357118096821253761
 NavMeshAgent:

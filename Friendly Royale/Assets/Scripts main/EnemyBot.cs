@@ -4,6 +4,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using Unity.Netcode;
 
 /// <summary>
 /// EnemyBot with internal coin system and inbuilt randomized deck + hand system.
@@ -107,7 +108,15 @@ public class EnemyBot : MonoBehaviour
 
     void Awake()
     {
-    if (spawner == null) spawner = FindFirstObjectByType<CardSpawner>();
+        // In multiplayer matches (Netcode active), disable the bot so players face each other
+        if (NetworkManager.Singleton != null && (NetworkManager.Singleton.IsServer || NetworkManager.Singleton.IsClient))
+        {
+            // Disable this GameObject entirely to avoid any AI logic
+            gameObject.SetActive(false);
+            return;
+        }
+
+        if (spawner == null) spawner = FindFirstObjectByType<CardSpawner>();
 
         // try to auto-assign manager if field left empty
         if (enemyDeckManager == null)
@@ -120,9 +129,9 @@ public class EnemyBot : MonoBehaviour
         cooldownOverridesDict = cooldownOverrides.ToDictionary(x => x.cardID, x => x.cooldownSeconds);
 
         // build deck & initial hand (delegates to manager if present)
-    BuildInitialDeck();
-    ShuffleDrawPile();
-    FillInitialHand();
+        BuildInitialDeck();
+        ShuffleDrawPile();
+        FillInitialHand();
     }
 
     void Update()

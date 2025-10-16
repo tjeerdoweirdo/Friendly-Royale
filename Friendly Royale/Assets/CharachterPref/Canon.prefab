@@ -288,6 +288,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e9e0d19ff55fd844a8c66a977cc92af3, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  enableNetworking: 0
   maxHealth: 150
   currentHealth: 0
   onDie:
@@ -316,6 +317,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 803f61fdf50f5d442903871e3934a4ec, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  isFlyingUnit: 0
+  canAttackAirUnits: 0
+  enableNetworking: 1
   faction: 0
   unitRole: 0
   effectStat: 0
@@ -325,6 +329,7 @@ MonoBehaviour:
   auraRadius: 3
   auraInterval: 1
   effectPrefab: {fileID: 0}
+  auraRangeIndicatorPrefab: {fileID: 0}
   moveSpeed: 0.5
   attackRange: 6
   attackDamage: 10
@@ -368,6 +373,11 @@ MonoBehaviour:
   attackClip: {fileID: 8300000, guid: d0cc21ca44b1a324c86d84db9887aedd, type: 3}
   movementClip: {fileID: 8300000, guid: b67e6871f04fd31489a228bea015ea28, type: 3}
   movementPlayThreshold: 0.2
+  animator: {fileID: 0}
+  attackAnimationClip: {fileID: 0}
+  moveAnimationClip: {fileID: 0}
+  idleAnimationClip: {fileID: 0}
+  useAttackAnimation: 1
   health: {fileID: 0}
 --- !u!195 &3470195664253330283
 NavMeshAgent:

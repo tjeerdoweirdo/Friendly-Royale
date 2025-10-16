@@ -49,6 +49,30 @@ public class MatchmakingManager : MonoBehaviour
     
     [Tooltip("Estimated wait time text")]
     public TMP_Text estimatedTimeText;
+
+    [Header("Queue UI")]
+    [Tooltip("Text showing how many players are queueing in the selected arena")]
+    public TMP_Text arenaQueueCountText;
+
+    [Header("Practice Match Overlay")] 
+    [Tooltip("Panel shown while a practice (AI) match is loading.")]
+    public GameObject practiceOverlayPanel;
+    [Tooltip("Status / countdown text for practice overlay.")]
+    public TMP_Text practiceOverlayStatusText;
+    [Tooltip("Progress slider for practice loading overlay.")]
+    public Slider practiceOverlayProgress;
+    [Tooltip("Seconds for practice pre-load before entering scene.")]
+    public float practicePreLoadDuration = 4f;
+
+    [Header("Loading Progress Settings")]
+    [Tooltip("Approximate seconds for search bar to naturally reach near-complete before a match is found (used only for visual pacing). If a match is found earlier, bar jumps to full.")]
+    public float expectedSearchDuration = 12f;
+    [Tooltip("Maximum fraction the search bar will auto-fill to before a match is found (prevents it reaching 100% too early).")]
+    [Range(0.5f,0.99f)] public float searchBarAutoFillCap = 0.92f;
+    [Tooltip("Seconds for the pre-match loading countdown after opponent found before entering the game scene.")]
+    public float preMatchLoadDuration = 8f;
+    [Tooltip("If true, show a countdown in the status during pre-match load.")]
+    public bool showPreMatchCountdownInStatus = true;
     
     [Header("Player Info UI")]
     [Tooltip("Text showing local player's username")]
@@ -95,6 +119,10 @@ public class MatchmakingManager : MonoBehaviour
     [Tooltip("If true, player sides are randomly assigned when opponent is found")]
     public bool randomizePlayerSides = true;
 
+    [Header("Styling")] 
+    [Tooltip("Color applied to all trophy count texts (gold style).")]
+    public Color trophyTextColor = new Color(1f, 0.843f, 0f); // Approx Gold (#FFD700)
+
     [Header("Deck Validation")]
     [Tooltip("Minimum cards required in deck")]
     public int minimumDeckSize = 4;
@@ -121,8 +149,34 @@ public class MatchmakingManager : MonoBehaviour
     private bool isSearching = false;
     private float searchStartTime;
     private Coroutine matchmakingCoroutine;
+    
+    // Lobby polling and heartbeat control
+    private Coroutine pollLobbyCoroutine;
+    private Coroutine lobbyHeartbeatCoroutine;
+    // Adaptive polling delays (helps avoid 429 Too Many Requests)
+    private float lobbyPollDelaySeconds = 2f;           // current delay
+    private const float LobbyPollMinDelay = 1.5f;       // floor
+    private const float LobbyPollMaxDelay = 10f;        // ceiling
+    private const float LobbyPollBackoffFactor = 1.8f;  // exponential backoff factor on 429
     private Lobby currentLobby;
     private bool useRealMultiplayer = true;
+    private bool matchFound = false;
+    private bool preMatchStarted = false;
+    private float preMatchStartTime;
+    private float searchStartTimeForProgress; // separate from existing searchStartTime logic
+    private bool isPracticeStarting = false;
+    private float practiceStartTime;
+    
+    // Queue count refresh control
+    private Coroutine queueCountCoroutine;
+    private float queueCountRefreshInterval = 10f;
+    
+    // Arena dropdown tracking
+    private List<Arena> arenasInDropdown = new List<Arena>();
+    private int lastValidArenaIndex = 0;
+
+    private enum LoadingPhase { None, Searching, PreMatch }
+    private LoadingPhase loadingPhase = LoadingPhase.None;
     
     // Local player information
     private string localPlayerUsername = "";
@@ -202,6 +256,9 @@ public class MatchmakingManager : MonoBehaviour
         UpdateUI();
         UpdateToggleButtonText();
         UpdatePlayerSideLabels();
+    ApplyTrophyTextStyling();
+        // Initial queue count
+        StartCoroutine(RefreshArenaQueueCount());
         
         // Initialize Unity Services for multiplayer
         InitializeUnityServices();
@@ -212,6 +269,13 @@ public class MatchmakingManager : MonoBehaviour
         if (isSearching)
         {
             UpdateMatchmakingProgress();
+        }
+        // Practice overlay passive progress (safety in case coroutine paused)
+        if (isPracticeStarting && practiceOverlayProgress != null)
+        {
+            float elapsed = Time.time - practiceStartTime;
+            float norm = Mathf.Clamp01(elapsed / Mathf.Max(0.01f, practicePreLoadDuration));
+            practiceOverlayProgress.value = norm;
         }
         
         UpdateUI();
@@ -266,6 +330,11 @@ public class MatchmakingManager : MonoBehaviour
         currentState = MatchmakingState.SearchingForMatch;
         isSearching = true;
         searchStartTime = Time.time;
+    searchStartTimeForProgress = Time.time;
+    matchFound = false;
+    preMatchStarted = false;
+    loadingPhase = LoadingPhase.Searching;
+    if (matchmakingProgress != null) matchmakingProgress.value = 0f;
         
         // Update UI
         if (findMatchButton != null) findMatchButton.gameObject.SetActive(false);
@@ -286,6 +355,13 @@ public class MatchmakingManager : MonoBehaviour
         
         SetStatus("Searching for opponent...");
         Debug.Log("Started matchmaking for arena: " + selectedArena.arenaID);
+        // Start periodic queue count refresh while searching
+        if (queueCountCoroutine != null)
+        {
+            StopCoroutine(queueCountCoroutine);
+            queueCountCoroutine = null;
+        }
+        queueCountCoroutine = StartCoroutine(ArenaQueueLoop());
     }
 
     public void CancelMatchmaking()
@@ -294,12 +370,31 @@ public class MatchmakingManager : MonoBehaviour
         
         isSearching = false;
         currentState = MatchmakingState.Idle;
+        loadingPhase = LoadingPhase.None;
+        preMatchStarted = false;
         
         // Stop matchmaking coroutine
         if (matchmakingCoroutine != null)
         {
             StopCoroutine(matchmakingCoroutine);
             matchmakingCoroutine = null;
+        }
+        // Stop polling and heartbeat coroutines
+        if (pollLobbyCoroutine != null)
+        {
+            StopCoroutine(pollLobbyCoroutine);
+            pollLobbyCoroutine = null;
+        }
+        if (lobbyHeartbeatCoroutine != null)
+        {
+            StopCoroutine(lobbyHeartbeatCoroutine);
+            lobbyHeartbeatCoroutine = null;
+        }
+        // Stop queue count loop
+        if (queueCountCoroutine != null)
+        {
+            StopCoroutine(queueCountCoroutine);
+            queueCountCoroutine = null;
         }
         
         // Leave lobby if we're in one
@@ -349,7 +444,48 @@ public class MatchmakingManager : MonoBehaviour
         PlayerPrefs.SetString("OpponentUsername", "AI Bot");
         PlayerPrefs.Save();
         
-        // Load the arena scene
+        // Show practice overlay and delay scene load
+        BeginPracticeOverlayAndLoad();
+    }
+
+    void BeginPracticeOverlayAndLoad()
+    {
+        if (practiceOverlayPanel != null)
+        {
+            practiceOverlayPanel.SetActive(true);
+        }
+        if (practiceOverlayProgress != null) practiceOverlayProgress.value = 0f;
+        if (practiceOverlayStatusText != null) practiceOverlayStatusText.text = "Preparing Practice Match...";
+        isPracticeStarting = true;
+        practiceStartTime = Time.time;
+        StartCoroutine(PracticeLoadCountdown());
+
+        // Hide opponent / player2 UI during practice start
+        HideOpponentInfo();
+        if (player2Label != null) player2Label.text = ""; // clear player2 text
+        if (player1Label != null) player1Label.text = "Player 1 (You)";
+    }
+
+    IEnumerator PracticeLoadCountdown()
+    {
+        while (isPracticeStarting)
+        {
+            float elapsed = Time.time - practiceStartTime;
+            float norm = Mathf.Clamp01(elapsed / Mathf.Max(0.01f, practicePreLoadDuration));
+            if (practiceOverlayProgress != null) practiceOverlayProgress.value = norm;
+            if (practiceOverlayStatusText != null)
+            {
+                float remaining = Mathf.Max(0f, practicePreLoadDuration - elapsed);
+                practiceOverlayStatusText.text = $"Loading Practice... {Mathf.CeilToInt(remaining)}s";
+            }
+            if (elapsed >= practicePreLoadDuration)
+            {
+                isPracticeStarting = false;
+                break;
+            }
+            yield return null;
+        }
+
         if (!string.IsNullOrEmpty(selectedArena.sceneName))
         {
             SceneManager.LoadScene(selectedArena.sceneName);
@@ -419,46 +555,29 @@ public class MatchmakingManager : MonoBehaviour
 
     IEnumerator SimulateMatchmaking()
     {
-        float phase1Time = simulatedMatchmakingTime * 0.4f; // 40% of time searching
-        float phase2Time = simulatedMatchmakingTime * 0.3f; // 30% of time "found match"
-        float phase3Time = simulatedMatchmakingTime * 0.3f; // 30% of time "joining"
-        
-        // Phase 1: Searching for opponent
-        float phase1Start = Time.time;
-        while (isSearching && (Time.time - phase1Start) < phase1Time)
+        // Just keep searching until we decide to "find" a match (simulate timing)
+        while (isSearching && !matchFound)
         {
-            SetStatus("Searching for opponent...");
-            yield return new WaitForSeconds(0.5f);
-            
-            if ((Time.time - phase1Start) > searchTimeBeforeExpansion)
+            if ((Time.time - searchStartTimeForProgress) > searchTimeBeforeExpansion)
             {
                 SetStatus("Expanding search range...");
             }
+            else
+            {
+                SetStatus("Searching for opponent...");
+            }
+            // Random chance to find opponent after minimum half of simulated time
+            if ((Time.time - searchStartTimeForProgress) > simulatedMatchmakingTime * 0.5f && Random.value < 0.15f)
+            {
+                // Found an opponent
+                currentState = MatchmakingState.FoundMatch;
+                GenerateSimulatedOpponent();
+                ShowOpponentFound();
+                break;
+            }
+            yield return new WaitForSeconds(0.5f);
         }
-        
-        if (!isSearching) yield break;
-        
-        // Phase 2: Found opponent
-        currentState = MatchmakingState.FoundMatch;
-        
-        // Simulate opponent data
-        GenerateSimulatedOpponent();
-        ShowOpponentFound();
-        
-        SetStatus("Opponent found! Preparing match...");
-        yield return new WaitForSeconds(phase2Time);
-        
-        if (!isSearching) yield break;
-        
-        // Phase 3: Joining match
-        currentState = MatchmakingState.JoiningMatch;
-        SetStatus("Starting multiplayer match...");
-        yield return new WaitForSeconds(phase3Time);
-        
-        if (!isSearching) yield break;
-        
-        // Start the multiplayer match
-        StartMultiplayerMatch();
+        // Pre-match countdown handled by ShowOpponentFound -> PreMatch coroutine
     }
 
     void StartMultiplayerMatch()
@@ -476,18 +595,33 @@ public class MatchmakingManager : MonoBehaviour
         PlayerPrefs.SetString("OpponentUsername", opponentUsername);
         PlayerPrefs.Save();
         
-        // For now, just start the same arena scene - in the future this would connect to Unity Netcode
-        SetStatus("Joining multiplayer match...");
-        
-        // Load the arena scene
-        if (!string.IsNullOrEmpty(selectedArena.sceneName))
-        {
-            SceneManager.LoadScene(selectedArena.sceneName);
-        }
-        else
+        SetStatus("Joining match...");
+
+        // Load the arena scene in a network-aware way
+        LoadArenaSceneNetworkAware();
+    }
+
+    // Host triggers synchronized scene load; clients are moved by server automatically
+    void LoadArenaSceneNetworkAware()
+    {
+        if (string.IsNullOrEmpty(selectedArena?.sceneName))
         {
             Debug.LogError("Selected arena has no scene name assigned!");
             SetStatus("Error: Arena scene not configured");
+            return;
+        }
+
+        if (useRealMultiplayer && NetworkManager.Singleton != null)
+        {
+            if (NetworkManager.Singleton.IsServer)
+            {
+                NetworkManager.Singleton.SceneManager.LoadScene(selectedArena.sceneName, LoadSceneMode.Single);
+            }
+            // Clients do not load locally; they will follow the server
+        }
+        else
+        {
+            SceneManager.LoadScene(selectedArena.sceneName);
         }
     }
 
@@ -495,23 +629,22 @@ public class MatchmakingManager : MonoBehaviour
     {
         while (isSearching)
         {
-            // Try to find or create a lobby
-            yield return StartCoroutine(FindOrCreateLobby());
-            
-            // If we found a match, break out of the loop
-            if (currentState == MatchmakingState.FoundMatch)
+            // If we already created or joined a lobby, don't spam find/create.
+            if (currentLobby == null)
             {
-                break;
+                // Try to find or create a lobby (handles its own rate limiting)
+                yield return StartCoroutine(FindOrCreateLobby());
             }
-            
-            // Wait before trying again
-            yield return new WaitForSeconds(2f);
+
+            // If we found a match, proceed
+            if (currentState == MatchmakingState.FoundMatch)
+                break;
+
+            // Otherwise, wait a bit and loop (polling coroutine will be running if we created a lobby)
+            yield return new WaitForSeconds(0.5f);
         }
-        
-        if (currentState == MatchmakingState.FoundMatch)
-        {
-            yield return StartCoroutine(JoinMatch());
-        }
+
+        // When a match is found, we now wait for the PreMatchCountdown to complete
     }
 
     IEnumerator FindOrCreateLobby()
@@ -519,6 +652,16 @@ public class MatchmakingManager : MonoBehaviour
         if (!AuthenticationService.Instance.IsSignedIn)
         {
             SetStatus("Not authenticated. Please restart the game.");
+            yield break;
+        }
+
+        // If we already have a lobby, ensure polling is active and return.
+        if (currentLobby != null)
+        {
+            if (pollLobbyCoroutine == null)
+            {
+                pollLobbyCoroutine = StartCoroutine(PollLobby());
+            }
             yield break;
         }
         
@@ -536,11 +679,36 @@ public class MatchmakingManager : MonoBehaviour
         
         var response = LobbyService.Instance.QueryLobbiesAsync(queryOptions);
         yield return new WaitUntil(() => response.IsCompleted);
-        
-        if (response.Exception == null && response.Result.Results.Count > 0)
+        bool rateLimited = response.Exception != null &&
+                           (response.Exception.Message != null &&
+                            (response.Exception.Message.Contains("Too Many Requests") || response.Exception.Message.Contains("429")));
+
+        if (response.Exception == null)
         {
-            // Found existing lobby, try to join it
-            var lobby = response.Result.Results[0];
+            // Filter to lobbies for the selected arena and with available slots
+            var all = response.Result.Results;
+            var sameArena = all.Where(l => l != null && l.Data != null && l.Data.ContainsKey("arena") && l.Data["arena"].Value == selectedArena.arenaID).ToList();
+
+            // Update queue count for this arena (sum players in open lobbies)
+            int queueCount = 0;
+            foreach (var l in sameArena)
+            {
+                // Consider only lobbies with at least one open slot to represent "queueing"
+                try
+                {
+                    if ((l.MaxPlayers - (l.Players?.Count ?? 0)) > 0)
+                    {
+                        queueCount += (l.Players != null ? l.Players.Count : 0);
+                    }
+                }
+                catch { /* ignore */ }
+            }
+            UpdateArenaQueueCount(queueCount);
+
+            if (sameArena.Count > 0)
+            {
+                // Found existing lobby for this arena, try to join it
+                var lobby = sameArena[0];
             
             string currentPlayerUsername = GetPlayerUsername();
             
@@ -557,21 +725,48 @@ public class MatchmakingManager : MonoBehaviour
                 }
             };
             
-            var joinResponse = LobbyService.Instance.JoinLobbyByIdAsync(lobby.Id, joinOptions);
+                var joinResponse = LobbyService.Instance.JoinLobbyByIdAsync(lobby.Id, joinOptions);
             yield return new WaitUntil(() => joinResponse.IsCompleted);
-            
-            if (joinResponse.Exception == null)
-            {
-                currentLobby = joinResponse.Result;
-                
-                // Extract opponent information (the host who created the lobby)
-                ExtractOpponentFromLobby();
-                ShowOpponentFound();
-                
-                currentState = MatchmakingState.FoundMatch;
-                SetStatus("Match found! Joining...");
-                yield break;
+            bool joinRateLimited = joinResponse.Exception != null &&
+                                   (joinResponse.Exception.Message != null &&
+                                    (joinResponse.Exception.Message.Contains("Too Many Requests") || joinResponse.Exception.Message.Contains("429")));
+                if (joinResponse.Exception == null)
+                {
+                    currentLobby = joinResponse.Result;
+
+                    // Verify lobby arena matches selection
+                    string lobbyArena = (currentLobby.Data != null && currentLobby.Data.ContainsKey("arena")) ? currentLobby.Data["arena"].Value : null;
+                    if (string.IsNullOrEmpty(lobbyArena) || lobbyArena != selectedArena.arenaID)
+                    {
+                        Debug.LogWarning("Joined lobby arena mismatch; leaving and continuing search.");
+                        LeaveLobby();
+                    }
+                    else
+                    {
+                        // Extract opponent information (the host who created the lobby)
+                        ExtractOpponentFromLobby();
+                        ShowOpponentFound();
+                        
+                        currentState = MatchmakingState.FoundMatch;
+                        SetStatus("Match found! Joining...");
+                        yield break;
+                    }
+                }
+                else if (joinRateLimited)
+                {
+                    // Rate limited when joining, back off and retry logic will be handled by outer loop
+                    lobbyPollDelaySeconds = Mathf.Min(LobbyPollMaxDelay, lobbyPollDelaySeconds * LobbyPollBackoffFactor);
+                    SetStatus("Rate limited. Slowing down join attempts...");
+                    yield return new WaitForSeconds(lobbyPollDelaySeconds);
+                }
             }
+        }
+        else if (rateLimited)
+        {
+            // Rate limited on query, back off and retry later
+            lobbyPollDelaySeconds = Mathf.Min(LobbyPollMaxDelay, lobbyPollDelaySeconds * LobbyPollBackoffFactor);
+            SetStatus("Rate limited. Slowing down search...");
+            yield return new WaitForSeconds(lobbyPollDelaySeconds);
         }
         
         // No suitable lobby found, create one
@@ -600,19 +795,42 @@ public class MatchmakingManager : MonoBehaviour
         
         var createResponse = LobbyService.Instance.CreateLobbyAsync($"Match_{selectedArena.arenaID}", 2, createOptions);
         yield return new WaitUntil(() => createResponse.IsCompleted);
-        
+        bool createRateLimited = createResponse.Exception != null &&
+                                 (createResponse.Exception.Message != null &&
+                                  (createResponse.Exception.Message.Contains("Too Many Requests") || createResponse.Exception.Message.Contains("429")));
+
         if (createResponse.Exception == null)
         {
             currentLobby = createResponse.Result;
             SetStatus("Waiting for opponent...");
+            // Our newly created lobby represents 1 player queued in this arena
+            UpdateArenaQueueCount(1);
             
             // Start polling for players joining
-            StartCoroutine(PollLobby());
+            if (pollLobbyCoroutine == null)
+            {
+                pollLobbyCoroutine = StartCoroutine(PollLobby());
+            }
+            // Start lobby heartbeat if we are the host to keep lobby alive
+            if (lobbyHeartbeatCoroutine == null)
+            {
+                lobbyHeartbeatCoroutine = StartCoroutine(LobbyHeartbeat());
+            }
         }
         else
         {
             Debug.LogError($"Failed to create lobby: {createResponse.Exception?.Message}");
-            SetStatus("Failed to create match. Retrying...");
+            if (createRateLimited)
+            {
+                lobbyPollDelaySeconds = Mathf.Min(LobbyPollMaxDelay, lobbyPollDelaySeconds * LobbyPollBackoffFactor);
+                SetStatus("Rate limited creating lobby. Retrying slower...");
+                yield return new WaitForSeconds(lobbyPollDelaySeconds);
+            }
+            else
+            {
+                SetStatus("Failed to create match. Retrying...");
+                yield return new WaitForSeconds(2f);
+            }
         }
     }
 
@@ -622,7 +840,11 @@ public class MatchmakingManager : MonoBehaviour
         {
             var response = LobbyService.Instance.GetLobbyAsync(currentLobby.Id);
             yield return new WaitUntil(() => response.IsCompleted);
-            
+
+            bool rateLimited = response.Exception != null &&
+                               (response.Exception.Message != null &&
+                                (response.Exception.Message.Contains("Too Many Requests") || response.Exception.Message.Contains("429")));
+
             if (response.Exception == null)
             {
                 currentLobby = response.Result;
@@ -630,24 +852,169 @@ public class MatchmakingManager : MonoBehaviour
                 // Check if lobby is full (2 players)
                 if (currentLobby.Players.Count >= 2)
                 {
-                    currentState = MatchmakingState.FoundMatch;
-                    
-                    // Extract opponent information
-                    ExtractOpponentFromLobby();
-                    ShowOpponentFound();
-                    
-                    SetStatus("Opponent found! Starting match...");
-                    break;
+                    // Ensure lobby arena matches our selection before starting
+                    string lobbyArena = (currentLobby.Data != null && currentLobby.Data.ContainsKey("arena")) ? currentLobby.Data["arena"].Value : null;
+                    if (!string.IsNullOrEmpty(lobbyArena) && selectedArena != null && lobbyArena == selectedArena.arenaID)
+                    {
+                        currentState = MatchmakingState.FoundMatch;
+                        
+                        // Extract opponent information
+                        ExtractOpponentFromLobby();
+                        ShowOpponentFound();
+                        
+                        SetStatus("Opponent found! Starting match...");
+                        break;
+                    }
+                    else
+                    {
+                        Debug.LogWarning("Lobby full but arena mismatch; waiting/leaving.");
+                        // Leave and reset to continue proper search
+                        LeaveLobby();
+                        currentLobby = null;
+                        // brief pause to avoid tight loop
+                        yield return new WaitForSeconds(0.5f);
+                        continue;
+                    }
                 }
+
+                // Successful poll - gently reduce delay toward minimum
+                lobbyPollDelaySeconds = Mathf.Max(LobbyPollMinDelay, lobbyPollDelaySeconds * 0.9f);
             }
             else
             {
-                Debug.LogError($"Failed to poll lobby: {response.Exception.Message}");
-                break;
+                if (rateLimited)
+                {
+                    // Exponential backoff on 429
+                    lobbyPollDelaySeconds = Mathf.Min(LobbyPollMaxDelay, lobbyPollDelaySeconds * LobbyPollBackoffFactor);
+                    SetStatus("Server busy. Slowing polling...");
+                }
+                else
+                {
+                    Debug.LogError($"Failed to poll lobby: {response.Exception.Message}");
+                    // For transient errors, wait a bit and continue; break only if lobby no longer valid
+                }
             }
-            
-            yield return new WaitForSeconds(1f);
+
+            // Add small jitter to avoid thundering herd
+            float jitter = Random.Range(0.9f, 1.1f);
+            yield return new WaitForSeconds(lobbyPollDelaySeconds * jitter);
         }
+
+        // Clear handle when loop ends
+        pollLobbyCoroutine = null;
+    }
+
+    IEnumerator ArenaQueueLoop()
+    {
+        while (isSearching)
+        {
+            yield return RefreshArenaQueueCount();
+            // Small jitter to avoid synchronized spikes
+            float jitter = Random.Range(0.9f, 1.1f);
+            yield return new WaitForSeconds(queueCountRefreshInterval * jitter);
+        }
+        queueCountCoroutine = null;
+    }
+
+    IEnumerator RefreshArenaQueueCount()
+    {
+        if (!useRealMultiplayer || selectedArena == null)
+        {
+            UpdateArenaQueueCount(0);
+            yield break;
+        }
+
+        if (!AuthenticationService.Instance.IsSignedIn)
+        {
+            UpdateArenaQueueCount(0);
+            yield break;
+        }
+
+        var queryOptions = new QueryLobbiesOptions
+        {
+            Count = 25,
+            Filters = new List<QueryFilter>
+            {
+                new QueryFilter(QueryFilter.FieldOptions.AvailableSlots, "1", QueryFilter.OpOptions.GE)
+            }
+        };
+
+        var response = LobbyService.Instance.QueryLobbiesAsync(queryOptions);
+        yield return new WaitUntil(() => response.IsCompleted);
+        if (response.Exception != null)
+        {
+            // Keep previous text; optionally show unknown
+            yield break;
+        }
+
+        var all = response.Result.Results;
+        int queueCount = 0;
+        foreach (var l in all)
+        {
+            try
+            {
+                if (l != null && l.Data != null && l.Data.ContainsKey("arena") && l.Data["arena"].Value == selectedArena.arenaID)
+                {
+                    if ((l.MaxPlayers - (l.Players?.Count ?? 0)) > 0)
+                    {
+                        queueCount += (l.Players != null ? l.Players.Count : 0);
+                    }
+                }
+            }
+            catch { /* ignore */ }
+        }
+        UpdateArenaQueueCount(queueCount);
+    }
+
+    void StartArenaQueueCountLoop(bool continuous)
+    {
+        if (queueCountCoroutine != null)
+        {
+            StopCoroutine(queueCountCoroutine);
+            queueCountCoroutine = null;
+        }
+        if (continuous)
+        {
+            queueCountCoroutine = StartCoroutine(ArenaQueueLoop());
+        }
+        else
+        {
+            // Trigger a single refresh
+            StartCoroutine(RefreshArenaQueueCount());
+        }
+    }
+
+    void UpdateArenaQueueCount(int count)
+    {
+        if (arenaQueueCountText != null)
+        {
+            string arenaName = selectedArena != null ? selectedArena.displayName : "Arena";
+            arenaQueueCountText.text = $"{arenaName} queue: {count}";
+        }
+    }
+
+    IEnumerator LobbyHeartbeat()
+    {
+        while (currentLobby != null && isSearching)
+        {
+            // Only the host should send heartbeat pings
+            bool isHost = false;
+            try
+            {
+                isHost = currentLobby != null && currentLobby.HostId == AuthenticationService.Instance.PlayerId;
+            }
+            catch { /* ignore */ }
+
+            if (isHost)
+            {
+                var ping = LobbyService.Instance.SendHeartbeatPingAsync(currentLobby.Id);
+                yield return new WaitUntil(() => ping.IsCompleted);
+            }
+
+            // Heartbeat recommended interval ~15s
+            yield return new WaitForSeconds(15f);
+        }
+        lobbyHeartbeatCoroutine = null;
     }
 
     IEnumerator JoinMatch()
@@ -681,16 +1048,8 @@ public class MatchmakingManager : MonoBehaviour
             }
         }
         
-        // Load the arena scene
-        if (!string.IsNullOrEmpty(selectedArena.sceneName))
-        {
-            SceneManager.LoadScene(selectedArena.sceneName);
-        }
-        else
-        {
-            Debug.LogError("Selected arena has no scene name assigned!");
-            SetStatus("Error: Arena scene not configured");
-        }
+        // Load scene (host) or let server sync clients
+        LoadArenaSceneNetworkAware();
     }
 
     async void LeaveLobby()
@@ -738,6 +1097,13 @@ public class MatchmakingManager : MonoBehaviour
     
     void ShowOpponentFound()
     {
+        matchFound = true;
+        // Complete the search bar visually
+        if (matchmakingProgress != null)
+        {
+            matchmakingProgress.value = 1f;
+        }
+
         // Update opponent username
         if (opponentUsernameText != null)
         {
@@ -747,7 +1113,7 @@ public class MatchmakingManager : MonoBehaviour
         // Update opponent trophy count
         if (opponentTrophyText != null)
         {
-            opponentTrophyText.text = $"{opponentTrophies}🏆";
+            opponentTrophyText.text = opponentTrophies.ToString();
         }
         
         // Update opponent deck size
@@ -789,7 +1155,13 @@ public class MatchmakingManager : MonoBehaviour
         UpdatePlayerSideLabels();
         
         // Update status with opponent info
-        SetStatus($"Opponent found: {opponentUsername} ({opponentTrophies}🏆)");
+        SetStatus($"Opponent found: {opponentUsername} ({opponentTrophies} trophies)");
+
+        // Begin pre-match countdown if not already started
+        if (!preMatchStarted)
+        {
+            StartCoroutine(PreMatchCountdown());
+        }
     }
     
     void HideOpponentInfo()
@@ -825,7 +1197,11 @@ public class MatchmakingManager : MonoBehaviour
         }
         
         // Update player side labels to remove opponent names
-        UpdatePlayerSideLabels();
+        // Only update labels if not currently in practice starting sequence (to keep custom text)
+        if (!isPracticeStarting)
+        {
+            UpdatePlayerSideLabels();
+        }
         
         // Clear opponent data
         opponentUsername = "";
@@ -898,22 +1274,46 @@ public class MatchmakingManager : MonoBehaviour
     }
 
 
-
     void UpdateMatchmakingProgress()
     {
-        if (matchmakingProgress != null)
+        if (matchmakingProgress == null) return;
+
+        switch (loadingPhase)
         {
-            float searchDuration = Time.time - searchStartTime;
-            float normalizedProgress = Mathf.PingPong(searchDuration * 0.5f, 1f);
-            matchmakingProgress.value = normalizedProgress;
-        }
-        
-        // Update estimated time
-        if (estimatedTimeText != null)
-        {
-            float searchTime = Time.time - searchStartTime;
-            int estimatedSeconds = Mathf.Max(0, (int)simulatedMatchmakingTime - (int)searchTime);
-            estimatedTimeText.text = $"Est. {estimatedSeconds}s";
+            case LoadingPhase.Searching:
+                if (!matchFound)
+                {
+                    // Auto-fill up to cap based on expected duration
+                    float elapsed = Time.time - searchStartTimeForProgress;
+                    if (expectedSearchDuration <= 0f) expectedSearchDuration = 10f;
+                    float target = Mathf.Clamp01(elapsed / expectedSearchDuration);
+                    target = Mathf.Min(target, searchBarAutoFillCap);
+                    // Smooth step towards target
+                    matchmakingProgress.value = Mathf.MoveTowards(matchmakingProgress.value, target, Time.deltaTime * 0.25f);
+                }
+                else
+                {
+                    matchmakingProgress.value = 1f;
+                }
+                // Estimated time display (time searching)
+                if (estimatedTimeText != null)
+                {
+                    float searchElapsed = Time.time - searchStartTimeForProgress;
+                    estimatedTimeText.text = $"Searching {searchElapsed:0}s";
+                }
+                break;
+            case LoadingPhase.PreMatch:
+                float preElapsed = Time.time - preMatchStartTime;
+                float preNorm = Mathf.Clamp01(preElapsed / preMatchLoadDuration);
+                matchmakingProgress.value = preNorm;
+                if (estimatedTimeText != null)
+                {
+                    float remaining = Mathf.Max(0f, preMatchLoadDuration - preElapsed);
+                    estimatedTimeText.text = $"Starting in {Mathf.CeilToInt(remaining)}s";
+                }
+                break;
+            default:
+                break;
         }
     }
 
@@ -932,7 +1332,7 @@ public class MatchmakingManager : MonoBehaviour
         
         if (localPlayerTrophyText != null)
         {
-            localPlayerTrophyText.text = $"{localPlayerTrophies}🏆";
+            localPlayerTrophyText.text = localPlayerTrophies.ToString();
         }
         
         if (localPlayerDeckSizeText != null)
@@ -967,6 +1367,12 @@ public class MatchmakingManager : MonoBehaviour
     void UpdatePlayerSideLabels()
     {
         string randomIndicator = (isSearching && randomizePlayerSides) ? " [Random]" : "";
+        if (isPracticeStarting)
+        {
+            if (player1Label != null) player1Label.text = "Player 1 (You)";
+            if (player2Label != null) player2Label.text = "";
+            return;
+        }
         
         if (player1Label != null)
         {
@@ -1005,7 +1411,7 @@ public class MatchmakingManager : MonoBehaviour
         // Update trophy count
         if (trophyCountText != null && playerProgress != null)
         {
-            trophyCountText.text = $"🏆 {playerProgress.trophies}";
+            trophyCountText.text = playerProgress.trophies.ToString();
         }
         
         // Update selected arena (already handled by dropdown selection)
@@ -1060,64 +1466,94 @@ public class MatchmakingManager : MonoBehaviour
     void InitializeArenaDropdown()
     {
         if (arenaDropdown == null || arenaManager == null) return;
+        // Make sure unlocked list reflects current trophies
+        if (ArenaManager.Instance != null)
+        {
+            ArenaManager.Instance.EnsureArenasUnlockedByTrophies();
+        }
         
         // Clear existing options
         arenaDropdown.ClearOptions();
         
-        // Get available arenas
+        // Build options from all arenas; grey out locked ones, remove trophy icon
         var availableArenas = new List<TMP_Dropdown.OptionData>();
-        var arenas = arenaManager.GetUnlockedArenas();
-        
-        for (int i = 0; i < arenas.Count; i++)
+        arenasInDropdown = arenaManager.GetAllArenas();
+
+        int trophies = playerProgress != null ? playerProgress.trophies : 0;
+        for (int i = 0; i < arenasInDropdown.Count; i++)
         {
-            var arena = arenas[i];
-            string displayText = arena.displayName;
-            
-            // Add trophy requirement if available
-            if (arena.trophyRequirement > 0)
+            var arena = arenasInDropdown[i];
+            bool unlockedByTrophies = trophies >= arena.trophyRequirement;
+            string label;
+            if (!unlockedByTrophies)
             {
-                displayText += $" ({arena.trophyRequirement}🏆)";
+                // Grey out locked entries; show required trophies plainly (no emoji)
+                label = $"<color=#999999>{arena.displayName} (Requires {arena.trophyRequirement} trophies)</color>";
             }
-            
-            availableArenas.Add(new TMP_Dropdown.OptionData(displayText));
+            else
+            {
+                // Show requirement for unlocked arenas too (informational)
+                label = $"{arena.displayName} ({arena.trophyRequirement} trophies)";
+            }
+            availableArenas.Add(new TMP_Dropdown.OptionData(label));
         }
-        
+
         arenaDropdown.AddOptions(availableArenas);
-        
-        // Set default selection (first unlocked arena or first arena)
+
+        // Default selection: highest index that is unlocked by trophies; else 0
         int defaultIndex = 0;
-        if (playerProgress != null)
+        for (int i = 0; i < arenasInDropdown.Count; i++)
         {
-            for (int i = 0; i < arenas.Count; i++)
+            if (trophies >= arenasInDropdown[i].trophyRequirement)
             {
-                if (playerProgress.trophies >= arenas[i].trophyRequirement)
-                {
-                    defaultIndex = i;
-                }
+                defaultIndex = i;
             }
         }
-        
-        arenaDropdown.value = defaultIndex;
+
+        lastValidArenaIndex = defaultIndex;
+        arenaDropdown.SetValueWithoutNotify(defaultIndex);
         OnArenaDropdownChanged(defaultIndex);
     }
     
     void OnArenaDropdownChanged(int index)
     {
         if (arenaManager == null) return;
-        
-        var arenas = arenaManager.GetUnlockedArenas();
-        if (index >= 0 && index < arenas.Count)
+        if (arenasInDropdown == null || arenasInDropdown.Count == 0) return;
+        if (index < 0 || index >= arenasInDropdown.Count) return;
+
+        var arena = arenasInDropdown[index];
+        int trophies = playerProgress != null ? playerProgress.trophies : 0;
+        bool unlockedByTrophies = trophies >= arena.trophyRequirement;
+
+        if (!unlockedByTrophies)
         {
-            selectedArena = arenas[index];
-            
-            // Update the selected arena text
+            // Block selection; revert to last valid index
+            arenaDropdown.SetValueWithoutNotify(lastValidArenaIndex);
+            // Inform the user
+            SetStatus($"Locked: requires {arena.trophyRequirement} trophies");
+            // Refresh selectedArenaText to current valid selection
+            var current = arenasInDropdown[lastValidArenaIndex];
+            selectedArena = current;
             if (selectedArenaText != null)
             {
-                selectedArenaText.text = selectedArena.displayName;
+                selectedArenaText.text = current.displayName;
             }
-            
-            Debug.Log($"Selected arena: {selectedArena.displayName}");
+            return;
         }
+
+        // Accept selection
+        selectedArena = arena;
+        lastValidArenaIndex = index;
+
+        // Update the selected arena text
+        if (selectedArenaText != null)
+        {
+            selectedArenaText.text = selectedArena.displayName;
+        }
+
+        Debug.Log($"Selected arena: {selectedArena.displayName}");
+        // Refresh queue count when selection changes
+        StartArenaQueueCountLoop(isSearching);
     }
 
     /// <summary>
@@ -1157,6 +1593,52 @@ public class MatchmakingManager : MonoBehaviour
             statusText.text = message;
         }
         Debug.Log($"Matchmaking Status: {message}");
+    }
+
+    IEnumerator PreMatchCountdown()
+    {
+        preMatchStarted = true;
+        loadingPhase = LoadingPhase.PreMatch;
+        preMatchStartTime = Time.time;
+        if (matchmakingProgress != null) matchmakingProgress.value = 0f;
+        while (isSearching && (Time.time - preMatchStartTime) < preMatchLoadDuration)
+        {
+            if (showPreMatchCountdownInStatus)
+            {
+                float remaining = Mathf.Max(0f, preMatchLoadDuration - (Time.time - preMatchStartTime));
+                SetStatus($"Preparing match... {Mathf.CeilToInt(remaining)}s");
+            }
+            yield return null;
+        }
+        if (!isSearching) yield break; // cancelled mid-countdown
+
+        // Proceed to match start (different path for real vs simulated)
+        if (useRealMultiplayer)
+        {
+            // For real multiplayer we may need to start network before scene load if not already
+            // If already joining, skip. Else start host/client depending on lobby role.
+            // Reuse JoinMatch logic if we have a lobby
+            if (currentLobby != null && NetworkManager.Singleton != null && !NetworkManager.Singleton.IsClient && !NetworkManager.Singleton.IsServer)
+            {
+                // Start host/client prior to scene load
+                bool isHost = currentLobby.HostId == AuthenticationService.Instance.PlayerId;
+                if (isHost)
+                    NetworkManager.Singleton.StartHost();
+                else
+                    NetworkManager.Singleton.StartClient();
+            }
+        }
+
+        // After full countdown, perform final transition
+        StartMultiplayerMatch();
+    }
+
+    void ApplyTrophyTextStyling()
+    {
+        // Set color of all trophy texts to gold
+        if (trophyCountText != null) trophyCountText.color = trophyTextColor;
+        if (localPlayerTrophyText != null) localPlayerTrophyText.color = trophyTextColor;
+        if (opponentTrophyText != null) opponentTrophyText.color = trophyTextColor;
     }
 
     public void ShowMatchmakingPanel()
@@ -1236,6 +1718,21 @@ public class MatchmakingManager : MonoBehaviour
         if (matchmakingCoroutine != null)
         {
             StopCoroutine(matchmakingCoroutine);
+        }
+        if (pollLobbyCoroutine != null)
+        {
+            StopCoroutine(pollLobbyCoroutine);
+            pollLobbyCoroutine = null;
+        }
+        if (lobbyHeartbeatCoroutine != null)
+        {
+            StopCoroutine(lobbyHeartbeatCoroutine);
+            lobbyHeartbeatCoroutine = null;
+        }
+        if (queueCountCoroutine != null)
+        {
+            StopCoroutine(queueCountCoroutine);
+            queueCountCoroutine = null;
         }
     }
 }

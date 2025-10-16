@@ -69,6 +69,10 @@ public class Card : ScriptableObject
     [Tooltip("If non-empty, this card is only unlocked after this arena is unlocked.")]
     public string unlockArenaID = "";
 
+    [Header("Unlocking")]
+    [Tooltip("If true, this card is always unlocked/usable regardless of arena or other unlock requirements.")]
+    public bool alwaysUnlocked = false;
+
     [Header("Spawn (for Troop/Building)")]
     public GameObject unitPrefab; // prefab spawned when card is played
 
@@ -156,4 +160,20 @@ public class Card : ScriptableObject
     public bool RequiresArena() => !string.IsNullOrEmpty(unlockArenaID);
     public bool IsSwarm() => isSwarm && swarmCount > 1;
     public int GetEffectiveUnitCount() => isSwarm ? swarmCount : 1;
+
+    /// <summary>
+    /// Returns true if this card should be considered unlocked for the given player progress.
+    /// Honors the alwaysUnlocked override, normal card unlocks, and arena gating.
+    /// </summary>
+    public bool IsUnlockedFor(PlayerProgress progress)
+    {
+        if (alwaysUnlocked) return true;
+        if (progress == null) return true; // fail-open in editor/demo contexts
+        if (progress.IsCardUnlocked(cardID)) return true;
+        if (RequiresArena())
+        {
+            return progress.IsArenaUnlocked(unlockArenaID);
+        }
+        return true;
+    }
 }

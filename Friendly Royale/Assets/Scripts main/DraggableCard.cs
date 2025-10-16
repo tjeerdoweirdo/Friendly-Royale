@@ -195,11 +195,16 @@ public class DraggableCard : MonoBehaviour, IBeginDragHandler, IDragHandler, IEn
         {
             Ray ray = mainCamera.ScreenPointToRay(eventData.position);
             
-            // Try NetworkCardPlacementSystem first, then fall back to CardPlacementSystem
+            // Try NetworkCardPlacementSystem first, with fallback to CardPlacementSystem if available
             NetworkCardPlacementSystem networkPlacement = NetworkCardPlacementSystem.Instance;
             if (networkPlacement != null)
             {
                 validPlacement = networkPlacement.TryGetPlacementPosition(ray, cardData, out worldPos);
+                if (!validPlacement && placementSystem != null)
+                {
+                    // Fallback to local placement system if network validation can't resolve a spot (e.g., layer mask mismatch)
+                    validPlacement = placementSystem.TryGetPlacementPosition(ray, cardData, out worldPos);
+                }
             }
             else if (placementSystem != null)
             {
@@ -302,6 +307,11 @@ public class DraggableCard : MonoBehaviour, IBeginDragHandler, IDragHandler, IEn
         if (networkPlacement != null)
         {
             isValid = networkPlacement.TryGetPlacementPosition(ray, cardData, out worldPos);
+            if (!isValid && placementSystem != null)
+            {
+                // Fallback preview using local placement system so the user still gets feedback
+                isValid = placementSystem.TryGetPlacementPosition(ray, cardData, out worldPos);
+            }
         }
         else if (placementSystem != null)
         {
@@ -359,11 +369,20 @@ public class DraggableCard : MonoBehaviour, IBeginDragHandler, IDragHandler, IEn
                 }
                 else
                 {
-                    // Fallback to direct spawner for offline mode
+                    // Fallback path: if networking is active and spawner supports networking, use ServerRpc; otherwise local spawn
                     CardSpawner spawner = FindFirstObjectByType<CardSpawner>();
                     if (spawner != null)
                     {
-                        StartCoroutine(spawner.SpawnUnitAtPosition(cardData, worldPosition, Unit.Faction.Player));
+                        bool netReady = Unity.Netcode.NetworkManager.Singleton != null && Unity.Netcode.NetworkManager.Singleton.IsListening;
+                        if (netReady && spawner.enabled)
+                        {
+                            ulong clientId = Unity.Netcode.NetworkManager.Singleton.LocalClientId;
+                            spawner.RequestSpawnServerRpc(worldPosition, cardData.cardID, Unit.Faction.Player, clientId);
+                        }
+                        else
+                        {
+                            StartCoroutine(spawner.SpawnUnitAtPosition(cardData, worldPosition, Unit.Faction.Player));
+                        }
                     }
                     else
                     {

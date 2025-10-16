@@ -18,7 +18,11 @@ MonoBehaviour:
   cardType: 0
   rarity: 1
   unlockArenaID: Tutorial
+  alwaysUnlocked: 1
   unitPrefab: {fileID: 3612153860632280071, guid: 389b887ca8f3d9643ab3db1b093aebc0, type: 3}
+  spellAsset: {fileID: 0}
+  spellLevel: 1
+  spellMaxLevel: 5
   coinCost: 5
   baseHealth: 25
   baseDamage: 20
@@ -27,6 +31,17 @@ MonoBehaviour:
   baseAttackCooldown: 2
   maxLevel: 10
   description: A slow explosive wielding card that can stop clusters of enemies
+  unitRole: 0
+  effectStat: 0
+  effectAmount: 0
+  effectDuration: 3
+  effectMode: 0
+  auraRadius: 3
+  auraInterval: 1
+  isSwarm: 0
+  swarmCount: 3
+  swarmSpacing: 1.5
+  swarmFormation: 0
   buildingType: 0
   buildingLifetime: 30
   buildingHpDecayPerSecond: 0

@@ -14,7 +14,28 @@ public class MatchUsernamesUI : MonoBehaviour
     [SerializeField] private string fallbackOpponent = "Opponent";
     [SerializeField] private string format = "{0} vs {1}"; // {0}=local, {1}=opponent
 
-    private void Start()
+    private void OnEnable()
+    {
+        // Refresh once shown
+        Refresh();
+        // Subscribe to basic connection events if NetworkManager exists
+        if (NetworkManager.Singleton != null)
+        {
+            NetworkManager.Singleton.OnClientConnectedCallback += OnClientEvent;
+            NetworkManager.Singleton.OnClientDisconnectCallback += OnClientEvent;
+        }
+    }
+
+    private void OnDisable()
+    {
+        if (NetworkManager.Singleton != null)
+        {
+            NetworkManager.Singleton.OnClientConnectedCallback -= OnClientEvent;
+            NetworkManager.Singleton.OnClientDisconnectCallback -= OnClientEvent;
+        }
+    }
+
+    private void OnClientEvent(ulong _)
     {
         Refresh();
     }
@@ -34,18 +55,33 @@ public class MatchUsernamesUI : MonoBehaviour
             if (!string.IsNullOrEmpty(n)) localName = n;
         }
 
-        if (NetworkManager.Singleton != null && NetworkManager.Singleton.ConnectedClientsList != null)
+        // Also fall back to values stored by MatchmakingManager
+        if (string.IsNullOrEmpty(localName))
         {
-            foreach (var cc in NetworkManager.Singleton.ConnectedClientsList)
+            localName = PlayerPrefs.GetString("LocalPlayerUsername", localName);
+        }
+        opponentName = PlayerPrefs.GetString("OpponentUsername", opponentName);
+
+        // Try to resolve via PlayerProgress mapping if available; otherwise keep PlayerPrefs fallback
+        if (NetworkManager.Singleton != null)
+        {
+            try
             {
-                if (cc.ClientId == NetworkManager.Singleton.LocalClientId) continue;
-                var oppPP = PlayerProgress.GetPlayerProgress(cc.ClientId);
-                if (oppPP != null)
+                var clients = NetworkManager.Singleton.ConnectedClientsIds; // works on client and server
+                foreach (var clientId in clients)
                 {
-                    var n = oppPP.GetUsername();
-                    if (!string.IsNullOrEmpty(n)) opponentName = n;
-                    break;
+                    if (clientId == NetworkManager.Singleton.LocalClientId) continue;
+                    var oppPP = PlayerProgress.GetPlayerProgress(clientId);
+                    if (oppPP != null)
+                    {
+                        var n = oppPP.GetUsername();
+                        if (!string.IsNullOrEmpty(n)) { opponentName = n; break; }
+                    }
                 }
+            }
+            catch
+            {
+                // ignore and use PlayerPrefs fallback
             }
         }
 

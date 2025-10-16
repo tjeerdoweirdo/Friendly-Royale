@@ -18,7 +18,11 @@ MonoBehaviour:
   cardType: 0
   rarity: 1
   unlockArenaID: Tutorial
+  alwaysUnlocked: 1
   unitPrefab: {fileID: 638458364159809943, guid: bbff8c60b925ce348823e557851edf84, type: 3}
+  spellAsset: {fileID: 0}
+  spellLevel: 1
+  spellMaxLevel: 5
   coinCost: 4
   baseHealth: 20
   baseDamage: 5
@@ -29,6 +33,17 @@ MonoBehaviour:
   description: 'A long Range card that can support your push from a distance
 
 '
+  unitRole: 0
+  effectStat: 0
+  effectAmount: 0
+  effectDuration: 3
+  effectMode: 0
+  auraRadius: 3
+  auraInterval: 1
+  isSwarm: 0
+  swarmCount: 3
+  swarmSpacing: 1.5
+  swarmFormation: 0
   buildingType: 0
   buildingLifetime: 30
   buildingHpDecayPerSecond: 0

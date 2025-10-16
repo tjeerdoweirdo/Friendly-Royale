@@ -18,7 +18,11 @@ MonoBehaviour:
   cardType: 1
   rarity: 2
   unlockArenaID: Tutorial
+  alwaysUnlocked: 1
   unitPrefab: {fileID: 7509619319991560720, guid: e6c49c94e6d972d45a828a41e75a50cd, type: 3}
+  spellAsset: {fileID: 0}
+  spellLevel: 1
+  spellMaxLevel: 5
   coinCost: 4
   baseHealth: 20
   baseDamage: 10
@@ -30,6 +34,17 @@ MonoBehaviour:
     away enemies
 
 '
+  unitRole: 0
+  effectStat: 0
+  effectAmount: 0
+  effectDuration: 3
+  effectMode: 0
+  auraRadius: 3
+  auraInterval: 1
+  isSwarm: 0
+  swarmCount: 3
+  swarmSpacing: 1.5
+  swarmFormation: 0
   buildingType: 2
   buildingLifetime: 30
   buildingHpDecayPerSecond: 1

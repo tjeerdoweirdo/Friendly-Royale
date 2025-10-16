@@ -18,7 +18,11 @@ MonoBehaviour:
   cardType: 0
   rarity: 2
   unlockArenaID: Tutorial
+  alwaysUnlocked: 1
   unitPrefab: {fileID: 8997525709764943298, guid: 829e27cdcda9b434fa6e43fc9e9309a2, type: 3}
+  spellAsset: {fileID: 0}
+  spellLevel: 1
+  spellMaxLevel: 5
   coinCost: 6
   baseHealth: 100
   baseDamage: 7
@@ -29,6 +33,17 @@ MonoBehaviour:
   description: 'A tank that shoots fast but doesnt have too much range
 
 '
+  unitRole: 0
+  effectStat: 0
+  effectAmount: 0
+  effectDuration: 3
+  effectMode: 0
+  auraRadius: 3
+  auraInterval: 1
+  isSwarm: 0
+  swarmCount: 3
+  swarmSpacing: 1.5
+  swarmFormation: 0
   buildingType: 0
   buildingLifetime: 30
   buildingHpDecayPerSecond: 0

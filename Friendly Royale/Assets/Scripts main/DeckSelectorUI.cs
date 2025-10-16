@@ -516,24 +516,30 @@ public class FullDeckSelector6 : MonoBehaviour
     {
         if (cardListContainer == null || cardEntryPrefab == null || deckManager == null) return;
 
+        // Ensure arenas are unlocked according to current trophies before filtering
+        if (arenaManager != null && ArenaManager.Instance != null)
+        {
+            ArenaManager.Instance.EnsureArenasUnlockedByTrophies();
+        }
+
         // Arena filter (use filterArena, not selectedArena)
         if (filterArena == null)
         {
-            // All Arenas: show all unlocked cards
+            // All Arenas: show cards that are available due to alwaysUnlocked, no gate, arena unlocked, or card unlocked
             availableCards = deckManager.allCards.Where(c =>
+                c.alwaysUnlocked ||
                 string.IsNullOrEmpty(c.unlockArenaID) ||
-                playerProgress.IsArenaUnlocked(c.unlockArenaID) ||
-                playerProgress.IsCardUnlocked(c.cardID)
+                (playerProgress != null && (playerProgress.IsArenaUnlocked(c.unlockArenaID) || playerProgress.IsCardUnlocked(c.cardID)))
             ).ToList();
         }
         else
         {
-            // Only cards for this arena
+            // Filtered by specific arena: include alwaysUnlocked, cards tied to this arena, or otherwise unlocked
             availableCards = deckManager.allCards.Where(c =>
+                c.alwaysUnlocked ||
                 string.IsNullOrEmpty(c.unlockArenaID) ||
                 c.unlockArenaID == filterArena.arenaID ||
-                playerProgress.IsArenaUnlocked(c.unlockArenaID) ||
-                playerProgress.IsCardUnlocked(c.cardID)
+                (playerProgress != null && (playerProgress.IsArenaUnlocked(c.unlockArenaID) || playerProgress.IsCardUnlocked(c.cardID)))
             ).ToList();
         }
 

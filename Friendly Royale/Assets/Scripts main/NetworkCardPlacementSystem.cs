@@ -344,12 +344,11 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
             return;
         }
         
-        ulong clientId = NetworkManager.Singleton.LocalClientId;
-        
-        // In offline mode or single player, place directly
-        if (!IsClient || !IsServer)
+        ulong clientId = NetworkManager.Singleton != null ? NetworkManager.Singleton.LocalClientId : 0UL;
+
+        // If networking isn't running, do a direct local spawn (offline/single-player)
+        if (!IsNetworkReady())
         {
-            // Direct local placement for offline/single-player
             CardSpawner spawner = FindFirstObjectByType<CardSpawner>();
             if (spawner != null)
             {
@@ -358,8 +357,8 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
             }
             return;
         }
-        
-        // For multiplayer, send request to server
+
+        // In multiplayer, always ask the server to validate and broadcast the spawn
         RequestCardPlacementServerRpc(position, card.cardID, playerFaction, clientId);
         Debug.Log($"[NetworkCardPlacementSystem] Requested placement: {card.cardName} at {position}");
     }
@@ -388,12 +387,27 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
         if (Physics.Raycast(ray, out RaycastHit hit, Mathf.Infinity, groundLayerMask))
         {
             worldPosition = hit.point;
-            
-            // Validate the position for the current player
+        }
+        else
+        {
+            // Fallback: project to y=0 plane so placement isn't blocked by layer misconfig
+            if (Mathf.Abs(ray.direction.y) > 0.0001f)
+            {
+                float t = -ray.origin.y / ray.direction.y;
+                if (t > 0)
+                {
+                    worldPosition = ray.origin + ray.direction * t;
+                }
+            }
+        }
+
+        // If we got a position, validate it
+        if (worldPosition != Vector3.zero)
+        {
             ulong clientId = NetworkManager.Singleton != null ? NetworkManager.Singleton.LocalClientId : 0;
             return IsValidPlacementPosition(worldPosition, card, Unit.Faction.Player, clientId);
         }
-        
+
         return false;
     }
     
@@ -549,15 +563,24 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
     
     private Card FindCardData(string cardID)
     {
-        // TODO: Implement proper card database lookup
-        Card[] allCards = FindObjectsByType<Card>(FindObjectsSortMode.None);
-        foreach (Card card in allCards)
+        if (string.IsNullOrEmpty(cardID)) return null;
+        // Prefer DeckManager's catalog when available
+        if (DeckManager.Instance != null && DeckManager.Instance.allCards != null)
         {
-            if (card.cardID == cardID)
+            foreach (var c in DeckManager.Instance.allCards)
             {
-                return card;
+                if (c != null && c.cardID == cardID)
+                    return c;
             }
         }
+        // Fallback: search loaded ScriptableObjects (Editor/runtime)
+        var all = Resources.FindObjectsOfTypeAll<Card>();
+        foreach (var c in all)
+        {
+            if (c != null && c.cardID == cardID)
+                return c;
+        }
+        Debug.LogWarning($"[NetworkCardPlacementSystem] Card data not found for id '{cardID}'. Ensure it exists in DeckManager.allCards or is loadable via Resources.");
         return null;
     }
 }

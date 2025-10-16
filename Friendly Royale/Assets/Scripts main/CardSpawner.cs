@@ -5,6 +5,7 @@ using System.Reflection;
 using UnityEngine.AI;
 using UnityEngine.UI;
 using Unity.Netcode;
+using System.Linq;
 
 /// <summary>
 /// Spawns units from cards at specified positions for both Player and Enemy factions with optional network support.
@@ -44,6 +45,214 @@ public class CardSpawner : NetworkBehaviour
     // Spawn choice UI removed - drag-and-drop system handles all placement
 
     // CardSpawner now has integrated network functionality
+
+    // --- Networked Spawn Path (ServerRpc -> ClientRpc) ---
+    bool IsNetworkReady()
+    {
+        return NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
+    }
+
+    Card FindCardById(string cardID)
+    {
+        if (string.IsNullOrEmpty(cardID)) return null;
+        // Prefer DeckManager's catalog
+        if (DeckManager.Instance != null && DeckManager.Instance.allCards != null)
+        {
+            var found = DeckManager.Instance.allCards.FirstOrDefault(c => c != null && c.cardID == cardID);
+            if (found != null) return found;
+        }
+        // Fallback: find any loaded ScriptableObjects (editor/runtime)
+        var all = Resources.FindObjectsOfTypeAll<Card>();
+        foreach (var c in all)
+        {
+            if (c != null && c.cardID == cardID) return c;
+        }
+        return null;
+    }
+
+    [ServerRpc(RequireOwnership = false)]
+    public void RequestSpawnServerRpc(Vector3 position, string cardID, Unit.Faction faction, ulong clientId)
+    {
+        var card = FindCardById(cardID);
+        if (card == null)
+        {
+            Debug.LogWarning($"[CardSpawner] RequestSpawnServerRpc: card not found '{cardID}' from client {clientId}");
+            return;
+        }
+        // Optionally: validate placement here (range/area) if needed
+
+        // Prefer authoritative spawning if prefab has a NetworkObject; otherwise, fall back to broadcast instantiate.
+        var prefabHasNetObj = card.unitPrefab != null && card.unitPrefab.GetComponent<NetworkObject>() != null;
+        if (prefabHasNetObj && IsNetworkReady())
+        {
+            // Ensure the prefab is registered so NGO can spawn it
+            try { NetworkManager.Singleton.AddNetworkPrefab(card.unitPrefab); } catch { /* ignore duplicates */ }
+
+            // Compute lane/paths info
+            bool useLeftPath = position.x < 0f;
+            int level = CalculateCardLevel(card);
+
+            if (card.cardType == CardType.Building)
+            {
+                var go = Instantiate(card.unitPrefab, position, Quaternion.identity);
+                var net = go.GetComponent<NetworkObject>();
+                net.Spawn();
+                ConfigureSpawnedObject(go, card, faction, level, position, useLeftPath);
+                InitializeSpawnedUnitClientRpc(net.NetworkObjectId, cardID, faction, level, position, useLeftPath);
+            }
+            else
+            {
+                // Troop (supports swarm)
+                Vector3[] spawnPositions = GetSwarmPositions(position, card);
+                foreach (var pos in spawnPositions)
+                {
+                    bool left = pos.x < 0f;
+                    var go = Instantiate(card.unitPrefab, pos, Quaternion.identity);
+                    var net = go.GetComponent<NetworkObject>();
+                    net.Spawn();
+                    ConfigureSpawnedObject(go, card, faction, level, pos, left);
+                    InitializeSpawnedUnitClientRpc(net.NetworkObjectId, cardID, faction, level, pos, left);
+                }
+            }
+        }
+        else
+        {
+            // Fallback to legacy broadcast instantiate path
+            SpawnClientRpc(position, cardID, faction);
+        }
+    }
+
+    [ClientRpc]
+    void SpawnClientRpc(Vector3 position, string cardID, Unit.Faction faction)
+    {
+        var card = FindCardById(cardID);
+        if (card == null)
+        {
+            Debug.LogWarning($"[CardSpawner] SpawnClientRpc: card not found '{cardID}'");
+            return;
+        }
+        StartCoroutine(SpawnUnitAtPosition(card, position, faction));
+    }
+
+    int CalculateCardLevel(Card card)
+    {
+        int level = 1;
+        string arenaID = "default";
+        if (DeckManager.Instance != null && DeckManager.Instance.selectedArena != null)
+        {
+            arenaID = DeckManager.Instance.selectedArena.arenaID;
+        }
+        else if (DeckManager.Instance != null && !string.IsNullOrEmpty(DeckManager.Instance.selectedArenaID))
+        {
+            arenaID = DeckManager.Instance.selectedArenaID;
+        }
+        else
+        {
+            var sceneArena = FindFirstObjectByType<Arena>();
+            if (sceneArena != null) arenaID = sceneArena.arenaID;
+        }
+        if (PlayerProgress.Instance != null && !string.IsNullOrEmpty(card.cardID))
+        {
+            level = PlayerProgress.Instance.GetCardLevel(card.cardID, arenaID);
+            if (level < 1) level = 1;
+        }
+        return level;
+    }
+
+    void ConfigureSpawnedObject(GameObject go, Card card, Unit.Faction faction, int level, Vector3 worldPos, bool useLeftPath)
+    {
+        if (card.cardType == CardType.Building)
+        {
+            var b = go.GetComponent<Building>();
+            if (b != null)
+            {
+                b.faction = faction;
+                b.buildingType = (Building.BuildingType)card.buildingType;
+                if (b.buildingType == Building.BuildingType.Defense)
+                {
+                    b.attackRange = card.defenseAttackRange;
+                    b.attackDamage = card.defenseAttackDamage;
+                    b.attackCooldown = card.defenseAttackCooldown;
+                }
+                else if (b.buildingType == Building.BuildingType.Spawner)
+                {
+                    b.unitPrefab = card.spawnUnitPrefab;
+                    b.spawnInterval = card.spawnInterval;
+                }
+            }
+            return;
+        }
+
+        if (card.unitPrefab == null) return;
+
+        Transform[] leftPathToUse = (faction == Unit.Faction.Player) ? leftPathPlayer : leftPathEnemy;
+        Transform[] rightPathToUse = (faction == Unit.Faction.Player) ? rightPathPlayer : rightPathEnemy;
+
+        var unit = go.GetComponent<Unit>();
+        var hp = go.GetComponent<UnitHealth>();
+
+        if (unit != null)
+        {
+            unit.faction = faction;
+            unit.SetBothPaths(leftPathToUse, rightPathToUse, useLeftPath);
+        }
+
+        float multiplier = 1f + 0.10f * (level - 1);
+        if (hp != null)
+        {
+            hp.maxHealth = Mathf.RoundToInt(card.GetHealthForLevel(level));
+            hp.currentHealth = hp.maxHealth;
+            hp.cardLevel = level;
+        }
+
+        if (unit != null)
+        {
+            unit.moveSpeed = card.baseSpeed * multiplier;
+            unit.attackDamage = Mathf.RoundToInt(card.baseDamage * multiplier);
+            unit.attackRange = card.baseRange;
+            unit.attackCooldown = card.baseAttackCooldown;
+
+            if (TryGetCardValue<bool>(card, "isRanged", out bool isRangedVal)) unit.isRanged = isRangedVal;
+            if (TryGetCardValue<GameObject>(card, "projectilePrefab", out GameObject projPrefabVal)) unit.projectilePrefab = projPrefabVal;
+            if (TryGetCardValue<float>(card, "projectileSpeed", out float projSpeedVal)) unit.projectileSpeed = projSpeedVal;
+            else if (TryGetCardValue<double>(card, "projectileSpeed", out double projSpeedDoubleVal)) unit.projectileSpeed = (float)projSpeedDoubleVal;
+            else if (TryGetCardValue<int>(card, "projectileSpeed", out int projSpeedIntVal)) unit.projectileSpeed = (float)projSpeedIntVal;
+
+            if (TryGetCardValue<string>(card, "firePointName", out string firePointNameVal) && !string.IsNullOrEmpty(firePointNameVal))
+            {
+                Transform child = go.transform.Find(firePointNameVal);
+                if (child != null) unit.firePoint = child;
+            }
+            if (unit.isRanged && unit.firePoint == null)
+            {
+                Transform fp = go.transform.Find("FirePoint") ?? go.transform.Find("Muzzle") ?? go.transform.Find("firePoint");
+                if (fp != null) unit.firePoint = fp;
+            }
+
+            unit.endTargetTower = (faction == Unit.Faction.Player) ? enemyKingTower : playerKingTower;
+            unit.SyncAgentToStats();
+            if (unit.agent != null)
+            {
+                if (unit.path != null && unit.path.Length > 0 && unit.path[0] != null)
+                    unit.agent.SetDestination(unit.path[0].position);
+                else if (unit.endTargetTower != null)
+                    unit.agent.SetDestination(unit.endTargetTower.transform.position);
+            }
+        }
+    }
+
+    [ClientRpc]
+    void InitializeSpawnedUnitClientRpc(ulong networkObjectId, string cardID, Unit.Faction faction, int level, Vector3 worldPos, bool useLeftPath)
+    {
+        // On clients, after authoritative spawn, mirror runtime configuration to keep stats consistent
+        if (!Unity.Netcode.NetworkManager.Singleton) return;
+        if (!Unity.Netcode.NetworkManager.Singleton.SpawnManager.SpawnedObjects.TryGetValue(networkObjectId, out var netObj)) return;
+
+        var go = netObj.gameObject;
+        var card = FindCardById(cardID);
+        if (card == null) return;
+        ConfigureSpawnedObject(go, card, faction, level, worldPos, useLeftPath);
+    }
 
     // Reflection helper for card properties
     bool TryGetCardValue<T>(object card, string name, out T value)

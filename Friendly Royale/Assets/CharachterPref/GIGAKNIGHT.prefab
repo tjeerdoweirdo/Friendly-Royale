@@ -448,6 +448,7 @@ MonoBehaviour:
   auraRadius: 3
   auraInterval: 1
   effectPrefab: {fileID: 0}
+  auraRangeIndicatorPrefab: {fileID: 0}
   moveSpeed: 2
   attackRange: 2
   attackDamage: 25
@@ -489,6 +490,11 @@ MonoBehaviour:
   attackClip: {fileID: 8300000, guid: 885711d8e8b0f004eb3e4224741c64e7, type: 3}
   movementClip: {fileID: 8300000, guid: 4b073e83b168f4e41b11e4b9562ccaa2, type: 3}
   movementPlayThreshold: 0.2
+  animator: {fileID: 0}
+  attackAnimationClip: {fileID: 0}
+  moveAnimationClip: {fileID: 0}
+  idleAnimationClip: {fileID: 0}
+  useAttackAnimation: 1
   health: {fileID: 0}
 --- !u!114 &5705047946193683371
 MonoBehaviour:
@@ -516,6 +522,14 @@ MonoBehaviour:
   jumpSound: {fileID: 8300000, guid: b9c89db81f7025d4a96dfcbc323c62e5, type: 3}
   landingSound: {fileID: 8300000, guid: 1fd31868d68903d4f9e2c4a3b7ef98f3, type: 3}
   meleeSound: {fileID: 8300000, guid: 0560f04ee7c91c1409d8078570b348ce, type: 3}
+  animator: {fileID: 0}
+  jumpWindUpClip: {fileID: 0}
+  jumpClip: {fileID: 0}
+  landingClip: {fileID: 0}
+  meleeClip: {fileID: 0}
+  windUpDuration: 0.5
+  smoothRotation: 1
+  rotationSpeed: 360
 --- !u!195 &-5796633739969187396
 NavMeshAgent:
   m_ObjectHideFlags: 0

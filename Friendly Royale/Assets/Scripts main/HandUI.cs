@@ -440,15 +440,26 @@ public class HandUI : MonoBehaviour
             }
             
             // Try to place the card
-            Vector3 worldPos;
-            if (placementSystem != null && placementSystem.TryGetPlacementPosition(ray, selectedCard, out worldPos))
-            {
-                PlaceSelectedCard(worldPos);
-            }
-            else
-            {
-                Debug.Log("[HandUI] Invalid placement position.");
-                // Could add audio/visual feedback here for invalid placement
+                    Vector3 worldPos;
+                    if (placementSystem != null && placementSystem.TryGetPlacementPosition(ray, selectedCard, out worldPos))
+                    {
+                        PlaceSelectedCard(worldPos);
+                    }
+                    else
+                    {
+                        // Try network placement system ray helper if available
+                        var net = NetworkCardPlacementSystem.Instance;
+                        if (net != null)
+                        {
+                            worldPos = net.GetWorldPositionFromScreen(screenPos);
+                            if (worldPos != Vector3.zero && net.IsValidPlacementPosition(worldPos, selectedCard, Unit.Faction.Player, Unity.Netcode.NetworkManager.Singleton != null ? Unity.Netcode.NetworkManager.Singleton.LocalClientId : 0))
+                            {
+                                PlaceSelectedCard(worldPos);
+                                return;
+                            }
+                        }
+                        Debug.Log("[HandUI] Invalid placement position.");
+                        // Could add audio/visual feedback here for invalid placement
             }
         }
         
@@ -496,8 +507,17 @@ public class HandUI : MonoBehaviour
                 }
                 else if (cardSpawner != null)
                 {
-                    // Fallback to direct spawner for offline mode
-                    StartCoroutine(cardSpawner.SpawnUnitAtPosition(selectedCard, worldPosition, Unit.Faction.Player));
+                    // Fallback: if networking is running, use spawner ServerRpc; else local spawn
+                    bool netReady = Unity.Netcode.NetworkManager.Singleton != null && Unity.Netcode.NetworkManager.Singleton.IsListening;
+                    if (netReady)
+                    {
+                        ulong clientId = Unity.Netcode.NetworkManager.Singleton.LocalClientId;
+                        cardSpawner.RequestSpawnServerRpc(worldPosition, selectedCard.cardID, Unit.Faction.Player, clientId);
+                    }
+                    else
+                    {
+                        StartCoroutine(cardSpawner.SpawnUnitAtPosition(selectedCard, worldPosition, Unit.Faction.Player));
+                    }
                 }
                 else
                 {
@@ -534,7 +554,7 @@ public class HandUI : MonoBehaviour
         if (cardIndex < 0 || cardIndex >= cardSlots.Count) return;
         
         Button cardButton = cardSlots[cardIndex];
-        if (cardButton == null) return;
+    if (cardButton == null) return;
         
         if (highlight)
         {
@@ -577,11 +597,8 @@ public class HandUI : MonoBehaviour
     private void OnCardClickedLegacy(int slotIndex)
     {
         if (DeckManager.Instance == null) return;
-        if (slotIndex >= DeckManager.Instance.hand.Count) return;
 
-        Card c = DeckManager.Instance.hand[slotIndex];
-        
-        // Check cost before proceeding
+    Card c = DeckManager.Instance.hand[slotIndex];
         if (CoinSystem.Instance.currentCoins < c.coinCost)
         {
             ShowElixirError();

@@ -119,6 +119,18 @@ public class PlayerCameraManager : MonoBehaviour
 
     private PlayerSide DetermineLocalSide()
     {
+        // 1) Highest priority: explicit saved assignment from matchmaking/practice
+        // MatchmakingManager stores "LocalPlayerIsPlayer1" before loading the match scene
+        try
+        {
+            if (PlayerPrefs.HasKey("LocalPlayerIsPlayer1"))
+            {
+                int isP1 = PlayerPrefs.GetInt("LocalPlayerIsPlayer1", 1);
+                return isP1 == 1 ? PlayerSide.Player1 : PlayerSide.Player2;
+            }
+        }
+        catch { /* ignore if PlayerPrefs unavailable */ }
+
         if (sideMode == SideMode.Override)
             return overrideSide;
 
@@ -134,7 +146,7 @@ public class PlayerCameraManager : MonoBehaviour
             catch { /* ignore if fields not present */ }
         }
 
-        // Offline/practice mode -> force Player1 if configured
+    // Offline/practice mode -> force Player1 if configured
         if (forcePlayer1InOffline)
         {
             // Prefer a central game mode manager if present
@@ -181,6 +193,11 @@ public class PlayerCameraManager : MonoBehaviour
         if (player1Camera != null) player1Camera.gameObject.SetActive(p1);
         if (player2Camera != null) player2Camera.gameObject.SetActive(!p1);
 
+        if (!player1Camera && !player2Camera)
+        {
+            Debug.LogWarning("[PlayerCameraManager] Both player1Camera and player2Camera are unassigned in the scene.");
+        }
+
         // AudioListener: ensure only one enabled
         AudioListener a1 = player1Audio != null ? player1Audio : (player1Camera != null ? player1Camera.GetComponent<AudioListener>() : null);
         AudioListener a2 = player2Audio != null ? player2Audio : (player2Camera != null ? player2Camera.GetComponent<AudioListener>() : null);
@@ -191,17 +208,19 @@ public class PlayerCameraManager : MonoBehaviour
         if (disableOtherCamerasInScene)
         {
             Camera keep = p1 ? player1Camera : player2Camera;
-            if (keep != null)
+            if (keep == null)
             {
-                var allCams = FindObjectsByType<Camera>(FindObjectsSortMode.None);
-                foreach (var cam in allCams)
-                {
-                    if (cam == null) continue;
-                    if (cam == keep) continue;
-                    cam.gameObject.SetActive(false);
-                    var al = cam.GetComponent<AudioListener>();
-                    if (al != null) al.enabled = false;
-                }
+                Debug.LogWarning("[PlayerCameraManager] disableOtherCamerasInScene is true but the selected camera reference is null. Skipping mass-disable.");
+                return;
+            }
+            var allCams = FindObjectsByType<Camera>(FindObjectsSortMode.None);
+            foreach (var cam in allCams)
+            {
+                if (cam == null) continue;
+                if (cam == keep) continue;
+                cam.gameObject.SetActive(false);
+                var al = cam.GetComponent<AudioListener>();
+                if (al != null) al.enabled = false;
             }
         }
     }
