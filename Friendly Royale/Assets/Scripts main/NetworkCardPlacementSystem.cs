@@ -11,6 +11,20 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
     [Header("Mode")]
     [Tooltip("When enabled, both players use the same 'Player 1' placement rules. There is no special Player 2 zone; placement validity is symmetric.")]
     public bool useUnifiedPlacementForAllPlayers = true;
+    [Header("Opponent Placement Mapping (Client-Side Spawns)")]
+    [Tooltip("If enabled, applies a local mapping to the opponent's placement positions when spawning client-side (ClientRpc path). Has no effect on authoritative NetworkObject spawns.")]
+    public bool mapOpponentPositions = false;
+
+    public enum OpponentMappingMode { None, MirrorAcrossX0, MirrorAcrossZ0, MirrorAcrossCustomPlane }
+    [Tooltip("How to map opponent positions locally on this client when spawning via ClientRpc.")]
+    public OpponentMappingMode opponentMappingMode = OpponentMappingMode.None;
+
+    [Tooltip("Custom plane point for MirrorAcrossCustomPlane mode (origin point on the plane). If null, world origin is used.")]
+    public Transform customPlanePoint;
+    [Tooltip("Custom plane normal in world space for MirrorAcrossCustomPlane mode.")]
+    public Vector3 customPlaneNormal = Vector3.forward;
+    [Tooltip("Optional world offset applied after mapping opponent positions.")]
+    public Vector3 opponentPositionOffset = Vector3.zero;
     [Header("Placement Areas - Layer Based")]
     [Tooltip("Layer mask for friendly/player placement areas")]
     public LayerMask friendlyPlacementLayerMask = 0;
@@ -608,15 +622,16 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
             return;
         }
         
-        // Spawn the card at the specified position (local faction will be computed client-side if needed)
+        // Determine local faction and map opponent position if configured (client-side spawn path only)
         ulong localId = NetworkManager.Singleton != null ? NetworkManager.Singleton.LocalClientId : 0UL;
         var localFaction = (placingClientId == localId) ? Unit.Faction.Player : Unit.Faction.Enemy;
-        StartCoroutine(spawner.SpawnUnitAtPosition(card, position, localFaction));
+        Vector3 spawnPos = MapOpponentPositionIfNeeded(position, placingClientId);
+        StartCoroutine(spawner.SpawnUnitAtPosition(card, spawnPos, localFaction));
         
     // Show visual feedback for the placement (faction local to this client)
-    ShowNetworkPlacementFeedback(position, card, localFaction, placingClientId);
+        ShowNetworkPlacementFeedback(spawnPos, card, localFaction, placingClientId);
         
-        Debug.Log($"[NetworkCardPlacementSystem] Spawned card {cardID} for client {placingClientId} at {position}");
+        Debug.Log($"[NetworkCardPlacementSystem] Spawned card {cardID} for client {placingClientId} at {spawnPos}");
     }
     
     /// <summary>
@@ -658,6 +673,39 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
         }
         Debug.LogWarning($"[NetworkCardPlacementSystem] Card data not found for id '{cardID}'. Ensure it exists in DeckManager.allCards or is loadable via Resources.");
         return null;
+    }
+
+    // Maps opponent placement position locally for client-side spawns (ClientRpc path).
+    // Does not affect server-authoritative NetworkObjects.
+    private Vector3 MapOpponentPositionIfNeeded(Vector3 original, ulong placingClientId)
+    {
+        if (!mapOpponentPositions) return original;
+        if (NetworkManager.Singleton == null) return original;
+        // Only map positions coming from the opponent (not our own placements)
+        if (placingClientId == NetworkManager.Singleton.LocalClientId) return original;
+
+        Vector3 pos = original;
+        switch (opponentMappingMode)
+        {
+            case OpponentMappingMode.MirrorAcrossX0:
+                pos = new Vector3(-pos.x, pos.y, pos.z);
+                break;
+            case OpponentMappingMode.MirrorAcrossZ0:
+                pos = new Vector3(pos.x, pos.y, -pos.z);
+                break;
+            case OpponentMappingMode.MirrorAcrossCustomPlane:
+                {
+                    Vector3 n = customPlaneNormal.sqrMagnitude > 1e-6f ? customPlaneNormal.normalized : Vector3.up;
+                    Vector3 P = customPlanePoint ? customPlanePoint.position : Vector3.zero;
+                    Vector3 v = pos - P;
+                    pos = pos - 2f * Vector3.Dot(v, n) * n;
+                }
+                break;
+            case OpponentMappingMode.None:
+            default:
+                break;
+        }
+        return pos + opponentPositionOffset;
     }
 
     [ClientRpc]

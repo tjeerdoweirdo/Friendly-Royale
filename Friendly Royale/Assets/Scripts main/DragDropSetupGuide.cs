@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
+using Unity.Netcode;
 
 /// <summary>
 /// Setup guide and validator for the new drag-and-drop card placement system.
@@ -25,6 +26,7 @@ public class DragDropSetupGuide : MonoBehaviour
     [SerializeField] private HandUI handUI;
     [SerializeField] private CardSpawner cardSpawner;
     [SerializeField] private CardPlacementSystem placementSystem;
+    [SerializeField] private NetworkCardPlacementSystem networkPlacement;
     
     [Header("🎨 Visual Settings")]
     [Tooltip("Prefab for drag preview (leave empty to auto-create)")]
@@ -34,7 +36,7 @@ public class DragDropSetupGuide : MonoBehaviour
     public Color validPlacementColor = Color.green;
     public Color invalidPlacementColor = Color.red;
     
-    [Header("⚙️ Placement Settings")]
+    [Header("⚙️ Placement Settings (Unified)")]
     [Range(5f, 25f)]
     [Tooltip("Maximum distance from player tower to place cards")]
     public float maxPlacementRange = 15f;
@@ -46,6 +48,17 @@ public class DragDropSetupGuide : MonoBehaviour
     [Range(1f, 4f)]
     [Tooltip("Minimum distance between buildings")]
     public float minDistanceBetweenBuildings = 2f;
+
+    [Header("🌐 Network Placement System")]
+    [Tooltip("Use the same valid zones for both players (no special Player 2 zone)")]
+    public bool useUnifiedPlacementForAllPlayers = true;
+    [Tooltip("Map opponent placements locally when using client-side spawns (mirroring/plane)")]
+    public bool mapOpponentPositions = false;
+    public NetworkCardPlacementSystem.OpponentMappingMode opponentMappingMode = NetworkCardPlacementSystem.OpponentMappingMode.None;
+    [Tooltip("Optional point on the plane used for custom plane mirror")] public Transform customPlanePoint;
+    [Tooltip("Plane normal used for custom plane mirror")] public Vector3 customPlaneNormal = Vector3.forward;
+    [Tooltip("Offset added after mapping opponent positions")] public Vector3 opponentPositionOffset = Vector3.zero;
+    [Tooltip("Ground layers used by placement raycasts")] public LayerMask groundLayerMask = 1;
     
     [Header("🖱️ Drag Settings")]
     [Range(10f, 50f)]
@@ -85,8 +98,9 @@ public class DragDropSetupGuide : MonoBehaviour
         // Step 1: Find and validate components
         FindComponents();
         
-        // Step 2: Create missing systems
-        SetupPlacementSystem();
+    // Step 2: Create missing systems
+    SetupPlacementSystem();
+    SetupNetworkPlacementSystem();
         
         // Step 3: Create drag preview
         SetupDragPreview();
@@ -151,7 +165,7 @@ public class DragDropSetupGuide : MonoBehaviour
     [ContextMenu("📖 Show Instructions")]
     public void ShowSetupInstructions()
     {
-        string guide = @"
+    string guide = @"
 🎮 DRAG-AND-DROP CARD SYSTEM SETUP GUIDE
 
 📋 QUICK START:
@@ -161,9 +175,10 @@ public class DragDropSetupGuide : MonoBehaviour
 
 🔧 MANUAL SETUP STEPS:
 1. Ensure HandUI exists with card slots assigned
-2. Ensure CardSpawner exists with king towers assigned  
-3. Ensure main camera is tagged 'MainCamera'
-4. Run 'Quick Setup All' to auto-configure everything
+2. Ensure CardSpawner exists (king towers will bind automatically after scene configure)
+3. Ensure NetworkCardPlacementSystem exists (this guide can create it) and is on a GameObject with NetworkObject
+4. Ensure main camera is tagged 'MainCamera'
+5. Run 'Quick Setup All' to auto-configure everything
 
 🎯 TESTING:
 • Click cards: Works as before (backward compatible)
@@ -174,8 +189,8 @@ public class DragDropSetupGuide : MonoBehaviour
 
 ⚙️ CUSTOMIZATION:
 • Adjust placement settings in this component's inspector
+• Configure unified placement and opponent mapping on NetworkCardPlacementSystem
 • Modify drag sensitivity and visual feedback
-• Configure placement areas in CardPlacementSystem
 • Create custom drag preview prefabs
 
 🆘 TROUBLESHOOTING:
@@ -236,18 +251,58 @@ public class DragDropSetupGuide : MonoBehaviour
     private void ConfigurePlacementSystem()
     {
         if (placementSystem == null) return;
-        
-        // Configure with settings from this guide
-        placementSystem.maxPlacementRange = maxPlacementRange;
-        placementSystem.minDistanceFromTowers = minDistanceFromTowers;
-        placementSystem.minDistanceBetweenBuildings = minDistanceBetweenBuildings;
-        
-        // Set up layer masks
-        LayerMask groundMask = LayerMask.GetMask("Default", "Ground");
-        if (groundMask.value == 0) groundMask = 1; // Fallback to default layer
-        placementSystem.groundLayerMask = groundMask;
-        
-        Log("⚙️ Placement system configured with current settings");
+        // Link to backend
+        if (networkPlacement == null)
+        {
+            networkPlacement = FindFirstObjectByType<NetworkCardPlacementSystem>();
+        }
+        placementSystem.networkPlacement = networkPlacement;
+        Log("⚙️ CardPlacementSystem linked to NetworkCardPlacementSystem");
+    }
+
+    private void SetupNetworkPlacementSystem()
+    {
+        if (networkPlacement == null)
+        {
+            Log("🔧 Creating NetworkCardPlacementSystem...");
+            GameObject go = new GameObject("NetworkCardPlacementSystem");
+            go.transform.SetParent(transform);
+            networkPlacement = go.AddComponent<NetworkCardPlacementSystem>();
+            if (go.GetComponent<Unity.Netcode.NetworkObject>() == null)
+            {
+                go.AddComponent<Unity.Netcode.NetworkObject>();
+            }
+        }
+
+        // Apply configuration
+        networkPlacement.useUnifiedPlacementForAllPlayers = useUnifiedPlacementForAllPlayers;
+        networkPlacement.mapOpponentPositions = mapOpponentPositions;
+        networkPlacement.opponentMappingMode = opponentMappingMode;
+        networkPlacement.customPlanePoint = customPlanePoint;
+        networkPlacement.customPlaneNormal = customPlaneNormal;
+        networkPlacement.opponentPositionOffset = opponentPositionOffset;
+
+        // Ground mask: prefer user-provided; fallback to Default/Ground; then default layer
+        LayerMask gm = groundLayerMask;
+        if (gm.value == 0)
+        {
+            gm = LayerMask.GetMask("Default", "Ground");
+            if (gm.value == 0) gm = 1;
+        }
+        networkPlacement.groundLayerMask = gm;
+
+        // Range and distance helpers
+        networkPlacement.maxPlacementRange = maxPlacementRange;
+        networkPlacement.minDistanceFromTowers = minDistanceFromTowers;
+        networkPlacement.minDistanceBetweenBuildings = minDistanceBetweenBuildings;
+
+        // Ensure frontend is linked
+        if (placementSystem != null)
+        {
+            placementSystem.networkPlacement = networkPlacement;
+        }
+
+        Log("✅ NetworkCardPlacementSystem created/configured");
     }
 
     private void SetupDragPreview()

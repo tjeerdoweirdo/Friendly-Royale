@@ -2,7 +2,8 @@ using UnityEngine;
 using Unity.Netcode;
 
 /// <summary>
-/// Handles per-player setup: assigning camera, UI canvas, and configuring CardPlacementSystem side.
+/// Handles per-player setup: assigning camera and UI canvas. Placement uses unified Player1 rules per client,
+/// so there's no per-player side to set anymore (both clients feel like Player1).
 /// Attach to a player prefab with NetworkObject.
 /// </summary>
 public class NetworkPlayerSetup : NetworkBehaviour
@@ -12,9 +13,11 @@ public class NetworkPlayerSetup : NetworkBehaviour
     public Canvas playerUICanvas;
     public CardPlacementSystem placementSystem; // local-only reference (not on prefab, found at runtime)
 
-    [Header("Side Configuration")] 
-    [Tooltip("If true, this instance forces Player1 side (override network index)")] public bool forcePlayer1;
-    [Tooltip("If true, this instance forces Player2 side (override network index)")] public bool forcePlayer2;
+    [Header("Side Configuration (Optional Fallback)")] 
+    [Tooltip("If true, writes PlayerPrefs LocalPlayerIsPlayer1=1 as a fallback override for systems that still read it.")]
+    public bool forcePlayer1;
+    [Tooltip("If true, writes PlayerPrefs LocalPlayerIsPlayer1=0 as a fallback override for systems that still read it.")]
+    public bool forcePlayer2;
 
     private bool initialized = false;
 
@@ -53,27 +56,22 @@ public class NetworkPlayerSetup : NetworkBehaviour
         if (playerCamera != null) playerCamera.gameObject.SetActive(true);
         if (playerUICanvas != null) playerUICanvas.gameObject.SetActive(true);
 
-        // Determine side
-        CardPlacementSystem.PlayerSide side = CardPlacementSystem.PlayerSide.Player1;
-        if (forcePlayer2) side = CardPlacementSystem.PlayerSide.Player2;
-        else if (!forcePlayer1)
+        // Optional: record a fallback preference for legacy systems
+        if (forcePlayer1 && !forcePlayer2)
         {
-            // Basic heuristic: first owner -> Player1, others -> Player2
-            side = (NetworkManager.Singleton.ConnectedClientsList.Count > 1 && OwnerClientId != NetworkManager.ServerClientId)
-                ? CardPlacementSystem.PlayerSide.Player2
-                : CardPlacementSystem.PlayerSide.Player1;
+            PlayerPrefs.SetInt("LocalPlayerIsPlayer1", 1);
+        }
+        else if (forcePlayer2 && !forcePlayer1)
+        {
+            PlayerPrefs.SetInt("LocalPlayerIsPlayer1", 0);
         }
 
-        // Find placement system (could be singleton-like or scene object)
+        // No explicit side configuration needed: TowerSceneAutoConfigurator assigns per-client sides by camera proximity.
         if (placementSystem == null)
         {
             placementSystem = FindFirstObjectByType<CardPlacementSystem>();
         }
-        if (placementSystem != null)
-        {
-            placementSystem.SetLocalPlayerSide(side);
-        }
 
-        Debug.Log($"[NetworkPlayerSetup] Local player initialized as {side} (ClientId={OwnerClientId})");
+        Debug.Log($"[NetworkPlayerSetup] Local player initialized (ClientId={OwnerClientId}). Unified placement is active; no per-side setup required.");
     }
 }
