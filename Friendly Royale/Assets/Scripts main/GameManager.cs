@@ -204,7 +204,26 @@ public class GameManager : NetworkBehaviour
             ToggleEnemyBot(true);
         }
 
-        Debug.Log($"[GameManager] Local side: {(localIsPlayer1 ? "Player1" : "Player2")} | EnemyBot: {(offline ? "ENABLED" : "DISABLED")}");
+        // Persist local side so TowerSceneAutoConfigurator can set factions consistently per client
+        try
+        {
+            PlayerPrefs.SetInt("LocalPlayerIsPlayer1", localIsPlayer1 ? 1 : 0);
+            PlayerPrefs.Save();
+        }
+        catch { /* ignore */ }
+
+        // Re-run tower auto configuration immediately, if present
+        try
+        {
+            var cfg = TowerSceneAutoConfigurator.Instance;
+            if (cfg != null)
+            {
+                cfg.ConfigureIfNeeded();
+            }
+        }
+        catch { /* ignore */ }
+
+        Debug.Log($"[GameManager] Local side: {(localIsPlayer1 ? "Player1" : "Player2")} | EnemyBot: {(offline ? "ENABLED" : "DISABLED")} | Pref(LocalPlayerIsPlayer1)={(PlayerPrefs.GetInt("LocalPlayerIsPlayer1",1))}");
     }
 
     private void ToggleEnemyBot(bool enable)

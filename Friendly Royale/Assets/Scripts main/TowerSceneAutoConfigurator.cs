@@ -20,6 +20,10 @@ public class TowerSceneAutoConfigurator : MonoBehaviour
     [Tooltip("If true, will delay arming damage by one frame after configuration to ensure health bars are present.")]
     public bool oneFrameDelayBeforeArming = true;
 
+    [Header("Assignment Mode")]
+    [Tooltip("If true, assigns Player/Enemy per client based on which King Tower is closest to the local camera. This makes both clients feel like Player1.")]
+    public bool assignByCameraProximity = true;
+
     public static bool DamageArmed { get; private set; } = false;
     public static System.Action OnDamageArmed; // units can subscribe if they want to wait
 
@@ -74,33 +78,52 @@ public class TowerSceneAutoConfigurator : MonoBehaviour
             return;
         }
 
-        // Determine local side preference
-        int localIsPlayer1 = PlayerPrefs.GetInt("LocalPlayerIsPlayer1", 1); // default Player1
-        bool localPlayerIsLeft = localIsPlayer1 == 1; // assume left side (lowest X) becomes Player if true
-
-        // Sort towers by X to decide sides deterministically
+        // Identify king towers to anchor assignment
         var ordered = towers.OrderBy(t => t.transform.position.x).ToList();
-        int half = ordered.Count / 2; // crude split; king towers may also help refine
-
-        // Identify king towers if any to anchor sides
         var kings = ordered.OfType<KingTower>().ToList();
-        if (kings.Count >= 2)
+
+        bool usedCameraMode = false;
+        if (assignByCameraProximity && kings.Count >= 2)
         {
-            // Use minX as left king, maxX as right king for clarity
-            var leftKing = kings.OrderBy(k => k.transform.position.x).First();
-            var rightKing = kings.OrderByDescending(k => k.transform.position.x).First();
-            AssignTower(leftKing, localPlayerIsLeft ? Unit.Faction.Player : Unit.Faction.Enemy);
-            AssignTower(rightKing, localPlayerIsLeft ? Unit.Faction.Enemy : Unit.Faction.Player);
+            var cam = Camera.main ?? FindFirstObjectByType<Camera>();
+            if (cam != null)
+            {
+                // Choose nearest king to camera as Player for this client
+                var nearest = kings.OrderBy(k => Vector3.Distance(k.transform.position, cam.transform.position)).First();
+                var farthest = kings.OrderByDescending(k => Vector3.Distance(k.transform.position, cam.transform.position)).First();
+                AssignTower(nearest, Unit.Faction.Player);
+                AssignTower(farthest, Unit.Faction.Enemy);
+                usedCameraMode = true;
+            }
         }
 
-        // Assign remaining towers by side of midpoint
-        float midX = ordered.Average(t => t.transform.position.x);
+        if (!usedCameraMode)
+        {
+            // Fallback: left/right based on PlayerPrefs (original behavior)
+            int localIsPlayer1 = PlayerPrefs.GetInt("LocalPlayerIsPlayer1", 1); // default Player1
+            bool localPlayerIsLeft = localIsPlayer1 == 1; // assume left side becomes Player
+
+            if (kings.Count >= 2)
+            {
+                var leftKing = kings.OrderBy(k => k.transform.position.x).First();
+                var rightKing = kings.OrderByDescending(k => k.transform.position.x).First();
+                AssignTower(leftKing, localPlayerIsLeft ? Unit.Faction.Player : Unit.Faction.Enemy);
+                AssignTower(rightKing, localPlayerIsLeft ? Unit.Faction.Enemy : Unit.Faction.Player);
+            }
+        }
+
+        // Assign remaining towers based on which king they are closer to
+        KingTower playerKing = towers.OfType<KingTower>().FirstOrDefault(k => k.faction == Unit.Faction.Player);
+        KingTower enemyKing = towers.OfType<KingTower>().FirstOrDefault(k => k.faction == Unit.Faction.Enemy);
         foreach (var t in ordered)
         {
-            if (t is KingTower) continue; // already assigned above
-            bool isLeft = t.transform.position.x <= midX;
-            var desiredFaction = (isLeft == localPlayerIsLeft) ? Unit.Faction.Player : Unit.Faction.Enemy;
-            AssignTower(t, desiredFaction);
+            if (t is KingTower) continue;
+            if (playerKing != null && enemyKing != null)
+            {
+                float dPlayer = Vector3.Distance(t.transform.position, playerKing.transform.position);
+                float dEnemy = Vector3.Distance(t.transform.position, enemyKing.transform.position);
+                AssignTower(t, dPlayer <= dEnemy ? Unit.Faction.Player : Unit.Faction.Enemy);
+            }
         }
 
         if (logDetails)

@@ -24,6 +24,17 @@ public class KingTower : Tower
     [Tooltip("Optional override per level. If non-empty and contains index for the level (1-based), that value is used for max health.")]
     public int[] levelHealthOverrides;
 
+    [Header("Enemy Level Override (optional)")]
+    [Tooltip("If set (>0), Enemy King Tower will use this level when opponent level is not provided by matchmaking.")]
+    public int enemyLevelOverride = 0;
+
+    // Static opponent king level broadcast (set by matchmaking when known)
+    private static int? s_OpponentKingLevel = null;
+    public static void SetOpponentKingLevel(int level)
+    {
+        s_OpponentKingLevel = Mathf.Max(1, level);
+    }
+
     [Header("Death Cleanup (King)")]
     [Tooltip("When the king dies, destroy all Units in the scene")] public bool destroyAllUnitsOnDeath = true;
     [Tooltip("When the king dies, also destroy all other Towers in the scene (besides this)")] public bool destroyAllTowersOnDeath = false;
@@ -77,9 +88,29 @@ public class KingTower : Tower
 
         // Compute max health from level before base.Start() initializes currentHealth/health bar
         int level = 1;
-        if (PlayerProgress.Instance != null)
+        if (isPlayerKing)
         {
-            level = PlayerProgress.Instance.GetKingTowerLevel();
+            if (PlayerProgress.Instance != null)
+            {
+                level = PlayerProgress.Instance.GetKingTowerLevel();
+            }
+        }
+        else
+        {
+            // Enemy King uses opponent level from matchmaking if available; otherwise optional override
+            if (s_OpponentKingLevel.HasValue)
+            {
+                level = s_OpponentKingLevel.Value;
+            }
+            else if (enemyLevelOverride > 0)
+            {
+                level = enemyLevelOverride;
+            }
+            else if (PlayerProgress.Instance != null)
+            {
+                // Fallback: mirror player's level if nothing else provided
+                level = PlayerProgress.Instance.GetKingTowerLevel();
+            }
         }
         int computedMax = baseMaxHealth + (Mathf.Max(1, level) - 1) * Mathf.Max(0, healthPerLevel);
         if (levelHealthOverrides != null && levelHealthOverrides.Length >= level && level > 0)

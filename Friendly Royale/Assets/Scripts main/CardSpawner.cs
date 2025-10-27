@@ -23,6 +23,8 @@ public class CardSpawner : NetworkBehaviour
     [Header("Network Settings")]
     [Tooltip("Enable networking for card spawning")]
     public bool enableNetworking = true;
+    [Tooltip("If true, the server will broadcast a ClientRpc for clients to spawn locally instead of spawning a shared NetworkObject. This makes placement work even if scenes/prefabs differ.")]
+    public bool alwaysClientSideSpawn = true;
     
     // Network state
     private bool isNetworkEnabled => enableNetworking && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
@@ -50,6 +52,47 @@ public class CardSpawner : NetworkBehaviour
     bool IsNetworkReady()
     {
         return NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
+    }
+
+    void OnEnable()
+    {
+        // After towers are configured, ensure we bind our king tower references based on faction
+        TowerSceneAutoConfigurator.OnDamageArmed += AutoAssignKingTowers;
+    }
+
+    void OnDisable()
+    {
+        TowerSceneAutoConfigurator.OnDamageArmed -= AutoAssignKingTowers;
+    }
+
+    private void AutoAssignKingTowers()
+    {
+        try
+        {
+            var kings = FindObjectsByType<KingTower>(FindObjectsSortMode.None);
+            if (kings == null || kings.Length == 0) return;
+            foreach (var k in kings)
+            {
+                if (k == null) continue;
+                if (k.faction == Unit.Faction.Player)
+                {
+                    playerKingTower = k;
+                }
+                else if (k.faction == Unit.Faction.Enemy)
+                {
+                    enemyKingTower = k;
+                }
+            }
+            if (playerKingTower == null || enemyKingTower == null)
+            {
+                Debug.LogWarning($"[CardSpawner] AutoAssignKingTowers: incomplete assignment (player={playerKingTower}, enemy={enemyKingTower}). Ensure TowerSceneAutoConfigurator ran.");
+            }
+            else
+            {
+                Debug.Log($"[CardSpawner] AutoAssignKingTowers: player='{playerKingTower.towerName}' enemy='{enemyKingTower.towerName}'");
+            }
+        }
+        catch { /* ignore */ }
     }
 
     Card FindCardById(string cardID)
@@ -84,7 +127,7 @@ public class CardSpawner : NetworkBehaviour
         // Prefer authoritative spawning if prefab has a NetworkObject; otherwise, fall back to broadcast instantiate.
     var prefabHasNetObj = card.unitPrefab != null && card.unitPrefab.GetComponent<NetworkObject>() != null;
     Debug.Log($"[CardSpawner] SpawnAuthoritative: card '{card.cardName}' found; prefab={(card.unitPrefab!=null?card.unitPrefab.name:"null")}; prefabHasNetObj={prefabHasNetObj}; networkReady={IsNetworkReady()}");
-    if (prefabHasNetObj && IsNetworkReady())
+    if (prefabHasNetObj && IsNetworkReady() && !alwaysClientSideSpawn)
         {
             // Ensure the prefab is registered so NGO can spawn it
             try { NetworkManager.Singleton.AddNetworkPrefab(card.unitPrefab); } catch { /* ignore duplicates */ }
@@ -864,6 +907,8 @@ public class CardSpawner : NetworkBehaviour
 
     void Start()
     {
+        // Ensure king tower references match local factions
+        AutoAssignKingTowers();
         // CardSpawner initialized
     }
 }

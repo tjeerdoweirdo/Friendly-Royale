@@ -8,6 +8,9 @@ using System.Collections.Generic;
 /// </summary>
 public class NetworkCardPlacementSystem : NetworkBehaviour
 {
+    [Header("Mode")]
+    [Tooltip("When enabled, both players use the same 'Player 1' placement rules. There is no special Player 2 zone; placement validity is symmetric.")]
+    public bool useUnifiedPlacementForAllPlayers = true;
     [Header("Placement Areas - Layer Based")]
     [Tooltip("Layer mask for friendly/player placement areas")]
     public LayerMask friendlyPlacementLayerMask = 0;
@@ -164,9 +167,18 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
     
     private bool IsPositionInValidArea(Vector3 position, Unit.Faction playerFaction)
     {
-        // Check layer mask based validation
-        int layerMask = (playerFaction == Unit.Faction.Player) ? friendlyPlacementLayerMask : enemyPlacementLayerMask;
-        
+        // Unified placement: treat both friendly and enemy layers as valid zones
+        int layerMask;
+        if (useUnifiedPlacementForAllPlayers)
+        {
+            layerMask = friendlyPlacementLayerMask | enemyPlacementLayerMask; // union
+        }
+        else
+        {
+            // Legacy: use per-faction masks
+            layerMask = (playerFaction == Unit.Faction.Player) ? friendlyPlacementLayerMask : enemyPlacementLayerMask;
+        }
+
         if (layerMask != 0)
         {
             // Raycast downward to check if we're over a valid layer
