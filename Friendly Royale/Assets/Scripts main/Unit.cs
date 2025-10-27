@@ -6,8 +6,8 @@ using Unity.Netcode;
 /// <summary>
 /// Unit with NavMeshAgent movement, waypoint lane following, melee/ranged attacks,
 /// visual spotting (FOV + LOS), chasing behavior, audio feedback, and an end-target tower.
+/// Note: UnitHealth is optional; this component works without it.
 /// </summary>
-[RequireComponent(typeof(UnitHealth))]
 public class Unit : NetworkBehaviour
 {
     [Header("Flying/Air Settings")]
@@ -162,6 +162,7 @@ public class Unit : NetworkBehaviour
     private float lastAttackTime = 0f;
     private Transform currentTarget;
     private float targetSearchTimer = 0f;
+    private float _netSyncTimer = 0f;
 
     // perception runtime
     private float visualTimer = 0f;
@@ -259,7 +260,12 @@ public class Unit : NetworkBehaviour
     
     private void OnNetworkFactionChanged(int previousValue, int newValue)
     {
-        faction = (Faction)newValue;
+        // To preserve per-client local faction remapping, only the server updates from the netvar.
+        if (IsServer)
+        {
+            faction = (Faction)newValue;
+        }
+        // Clients keep their local faction assigned during spawn initialization.
     }
     
     private void OnNetworkPositionChanged(Vector3 previousValue, Vector3 newValue)
@@ -315,7 +321,25 @@ public class Unit : NetworkBehaviour
 
     void Update()
     {
-        if (health == null || !health.IsAlive) return;
+        // Only stop updating if a UnitHealth exists and is dead; otherwise continue even without health.
+        if (health != null && !health.IsAlive) return;
+
+        // Server periodically publishes transform for clients
+        if (isNetworkEnabled && IsServer)
+        {
+            // Simple throttle to ~10 Hz position updates to reduce bandwidth
+            _netSyncTimer += Time.deltaTime;
+            if (_netSyncTimer >= 0.1f)
+            {
+                _netSyncTimer = 0f;
+                networkPosition.Value = transform.position;
+                // Keep network faction in sync in case it changes post-spawn
+                if (networkFaction.Value != (int)faction)
+                {
+                    networkFaction.Value = (int)faction;
+                }
+            }
+        }
 
         // Handle aura effects and visuals
         bool auraActive = (unitRole == UnitRole.Buffer || unitRole == UnitRole.Debuffer || unitRole == UnitRole.Healer)
@@ -460,7 +484,7 @@ public class Unit : NetworkBehaviour
             var targetTower = currentTarget.GetComponent<Tower>();
             var targetBuilding = currentTarget.GetComponent<Health>();
             
-            if (targetUnit != null && targetUnit.health != null && targetUnit.health.IsAlive)
+            if (targetUnit != null && (targetUnit.health == null || targetUnit.health.IsAlive))
                 targetStillValid = true;
             else if (targetHealth != null && targetHealth.IsAlive)
                 targetStillValid = true;
@@ -670,7 +694,8 @@ public class Unit : NetworkBehaviour
         {
             if (u == this) continue;
             if (u.faction == this.faction) continue;
-            if (u.health == null || !u.health.IsAlive) continue;
+            // If UnitHealth exists and is dead, skip; if missing, treat as valid target
+            if (u.health != null && !u.health.IsAlive) continue;
             // If target is flying, only target if canAttackAirUnits is true
             if (u.isFlyingUnit && !this.canAttackAirUnits) continue;
             if (!u.isFlyingUnit && this.isFlyingUnit && !this.canAttackAirUnits) continue;
@@ -1229,10 +1254,12 @@ public class Unit : NetworkBehaviour
         foreach (var hit in hits)
         {
             Unit enemyUnit = hit.GetComponent<Unit>();
-            if (enemyUnit != null && enemyUnit.faction != this.faction && 
-                enemyUnit.health != null && enemyUnit.health.IsAlive)
+            if (enemyUnit != null && enemyUnit.faction != this.faction)
             {
-                enemyCount++;
+                if (enemyUnit.health == null || enemyUnit.health.IsAlive)
+                {
+                    enemyCount++;
+                }
             }
         }
         

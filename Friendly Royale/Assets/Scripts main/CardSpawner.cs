@@ -70,20 +70,21 @@ public class CardSpawner : NetworkBehaviour
         return null;
     }
 
-    [ServerRpc(RequireOwnership = false)]
-    public void RequestSpawnServerRpc(Vector3 position, string cardID, Unit.Faction faction, ulong clientId)
+    // Public server-side entry point usable by other server RPCs to avoid nested ServerRpc calls
+    public void SpawnAuthoritative(string cardID, Vector3 position, Unit.Faction faction, ulong clientId)
     {
+        Debug.Log($"[CardSpawner] SpawnAuthoritative called for cardID='{cardID}' pos={position} faction={faction} client={clientId}");
         var card = FindCardById(cardID);
         if (card == null)
         {
-            Debug.LogWarning($"[CardSpawner] RequestSpawnServerRpc: card not found '{cardID}' from client {clientId}");
+            Debug.LogWarning($"[CardSpawner] SpawnAuthoritative: card not found '{cardID}' from client {clientId}");
             return;
         }
-        // Optionally: validate placement here (range/area) if needed
 
         // Prefer authoritative spawning if prefab has a NetworkObject; otherwise, fall back to broadcast instantiate.
-        var prefabHasNetObj = card.unitPrefab != null && card.unitPrefab.GetComponent<NetworkObject>() != null;
-        if (prefabHasNetObj && IsNetworkReady())
+    var prefabHasNetObj = card.unitPrefab != null && card.unitPrefab.GetComponent<NetworkObject>() != null;
+    Debug.Log($"[CardSpawner] SpawnAuthoritative: card '{card.cardName}' found; prefab={(card.unitPrefab!=null?card.unitPrefab.name:"null")}; prefabHasNetObj={prefabHasNetObj}; networkReady={IsNetworkReady()}");
+    if (prefabHasNetObj && IsNetworkReady())
         {
             // Ensure the prefab is registered so NGO can spawn it
             try { NetworkManager.Singleton.AddNetworkPrefab(card.unitPrefab); } catch { /* ignore duplicates */ }
@@ -96,9 +97,14 @@ public class CardSpawner : NetworkBehaviour
             {
                 var go = Instantiate(card.unitPrefab, position, Quaternion.identity);
                 var net = go.GetComponent<NetworkObject>();
+                Debug.Log($"[CardSpawner] SpawnAuthoritative spawning building '{go.name}' netObj={(net!=null)}");
                 net.Spawn();
+                // Server config uses server-side faction for gameplay; clients will re-map via placement system RPC
                 ConfigureSpawnedObject(go, card, faction, level, position, useLeftPath);
-                InitializeSpawnedUnitClientRpc(net.NetworkObjectId, cardID, faction, level, position, useLeftPath);
+                if (NetworkCardPlacementSystem.Instance != null)
+                {
+                    NetworkCardPlacementSystem.Instance.FinalizeSpawnClientRpc(net.NetworkObjectId, cardID, level, position, useLeftPath, clientId);
+                }
             }
             else
             {
@@ -109,29 +115,49 @@ public class CardSpawner : NetworkBehaviour
                     bool left = pos.x < 0f;
                     var go = Instantiate(card.unitPrefab, pos, Quaternion.identity);
                     var net = go.GetComponent<NetworkObject>();
+                    Debug.Log($"[CardSpawner] SpawnAuthoritative spawning troop '{go.name}' at {pos} netObj={(net!=null)}");
                     net.Spawn();
+                    // Server config uses server-side faction for gameplay; clients will re-map via placement system RPC
                     ConfigureSpawnedObject(go, card, faction, level, pos, left);
-                    InitializeSpawnedUnitClientRpc(net.NetworkObjectId, cardID, faction, level, pos, left);
+                    if (NetworkCardPlacementSystem.Instance != null)
+                    {
+                        NetworkCardPlacementSystem.Instance.FinalizeSpawnClientRpc(net.NetworkObjectId, cardID, level, pos, left, clientId);
+                    }
                 }
             }
         }
         else
         {
-            // Fallback to legacy broadcast instantiate path
-            SpawnClientRpc(position, cardID, faction);
+            // Fallback to broadcast instantiate via placement system (works even if this spawner isn't a networked object)
+            Debug.Log($"[CardSpawner] SpawnAuthoritative fallback to placement system ClientRpc for cardID='{cardID}'");
+            if (NetworkCardPlacementSystem.Instance != null && NetworkCardPlacementSystem.Instance.IsServer)
+            {
+                NetworkCardPlacementSystem.Instance.SpawnCardForAllClientsClientRpc(position, cardID, faction, clientId);
+            }
         }
     }
 
-    [ClientRpc]
-    void SpawnClientRpc(Vector3 position, string cardID, Unit.Faction faction)
+    [ServerRpc(RequireOwnership = false)]
+    public void RequestSpawnServerRpc(Vector3 position, string cardID, Unit.Faction faction, ulong clientId)
     {
+        // Delegate to the authoritative server-side method
+        SpawnAuthoritative(cardID, position, faction, clientId);
+    }
+
+    [ClientRpc]
+    void SpawnClientRpc(Vector3 position, string cardID, ulong placerClientId)
+    {
+        Debug.Log($"[CardSpawner] SpawnClientRpc invoked for cardID='{cardID}' pos={position} placer={placerClientId}");
         var card = FindCardById(cardID);
         if (card == null)
         {
             Debug.LogWarning($"[CardSpawner] SpawnClientRpc: card not found '{cardID}'");
             return;
         }
-        StartCoroutine(SpawnUnitAtPosition(card, position, faction));
+        // Compute local faction based on who placed it
+        ulong localId = Unity.Netcode.NetworkManager.Singleton != null ? Unity.Netcode.NetworkManager.Singleton.LocalClientId : 0UL;
+        var localFaction = (placerClientId == localId) ? Unit.Faction.Player : Unit.Faction.Enemy;
+        StartCoroutine(SpawnUnitAtPosition(card, position, localFaction));
     }
 
     int CalculateCardLevel(Card card)
@@ -159,7 +185,7 @@ public class CardSpawner : NetworkBehaviour
         return level;
     }
 
-    void ConfigureSpawnedObject(GameObject go, Card card, Unit.Faction faction, int level, Vector3 worldPos, bool useLeftPath)
+    public void ConfigureSpawnedObject(GameObject go, Card card, Unit.Faction faction, int level, Vector3 worldPos, bool useLeftPath)
     {
         if (card.cardType == CardType.Building)
         {
@@ -241,18 +267,7 @@ public class CardSpawner : NetworkBehaviour
         }
     }
 
-    [ClientRpc]
-    void InitializeSpawnedUnitClientRpc(ulong networkObjectId, string cardID, Unit.Faction faction, int level, Vector3 worldPos, bool useLeftPath)
-    {
-        // On clients, after authoritative spawn, mirror runtime configuration to keep stats consistent
-        if (!Unity.Netcode.NetworkManager.Singleton) return;
-        if (!Unity.Netcode.NetworkManager.Singleton.SpawnManager.SpawnedObjects.TryGetValue(networkObjectId, out var netObj)) return;
-
-        var go = netObj.gameObject;
-        var card = FindCardById(cardID);
-        if (card == null) return;
-        ConfigureSpawnedObject(go, card, faction, level, worldPos, useLeftPath);
-    }
+    
 
     // Reflection helper for card properties
     bool TryGetCardValue<T>(object card, string name, out T value)
@@ -353,14 +368,19 @@ public class CardSpawner : NetworkBehaviour
     public IEnumerator SpawnUnitAtPosition(Card card, Vector3 worldPos, Unit.Faction faction, int levelOverride = -1)
     {
         if (card == null)
+        {
+            Debug.LogWarning("[CardSpawner] SpawnUnitAtPosition called with null card");
             yield break;
+        }
+
+        Debug.Log($"[CardSpawner] SpawnUnitAtPosition called for '{card.cardName}' at {worldPos} faction={faction} levelOverride={levelOverride} isNetworkEnabled={isNetworkEnabled}");
 
         // Handle network spawning if enabled
         if (isNetworkEnabled)
         {
             // For now, just proceed with local spawning
             // TODO: Add proper network spawning logic
-            Debug.Log("Network spawning not yet implemented - using local spawning");
+            Debug.Log("[CardSpawner] Network spawning not yet implemented - using local spawning");
         }
 
         // Determine level: use override if provided, else PlayerProgress
@@ -417,7 +437,14 @@ public class CardSpawner : NetworkBehaviour
         // --- BUILDING CASE ---
         if (card.cardType == CardType.Building)
         {
+            if (card.unitPrefab == null)
+            {
+                Debug.LogWarning($"[CardSpawner] Cannot spawn building '{card.cardName}' - unitPrefab is null");
+                yield break;
+            }
+
             GameObject go = Instantiate(card.unitPrefab, worldPos, Quaternion.identity);
+            Debug.Log($"[CardSpawner] Instantiated building prefab '{(go!=null?go.name:"null")}' at {worldPos}");
             
             Building building = go.GetComponent<Building>();
             if (building != null)
@@ -470,7 +497,14 @@ public class CardSpawner : NetworkBehaviour
 
         for (int i = 0; i < unitsToSpawn && i < spawnPositions.Length; i++)
         {
+            if (card.unitPrefab == null)
+            {
+                Debug.LogWarning($"[CardSpawner] Cannot spawn troop for '{card.cardName}' - unitPrefab is null");
+                yield break;
+            }
+
             GameObject troopGo = Instantiate(card.unitPrefab, spawnPositions[i], Quaternion.identity);
+            Debug.Log($"[CardSpawner] Instantiated troop prefab '{(troopGo!=null?troopGo.name:"null")}' at {spawnPositions[i]}");
 
             Unit unit = troopGo.GetComponent<Unit>();
             UnitHealth healthTroop = troopGo.GetComponent<UnitHealth>();

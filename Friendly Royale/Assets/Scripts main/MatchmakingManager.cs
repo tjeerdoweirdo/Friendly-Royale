@@ -10,6 +10,12 @@ using Unity.Services.Authentication;
 using Unity.Services.Core;
 using Unity.Services.Lobbies;
 using Unity.Services.Lobbies.Models;
+#if UNITY_RELAY_INSTALLED
+using Unity.Services.Relay;
+using Unity.Services.Relay.Models;
+using Unity.Networking.Transport.Relay;
+#endif
+using Unity.Netcode.Transports.UTP;
 
 public class MatchmakingManager : MonoBehaviour
 {
@@ -166,6 +172,9 @@ public class MatchmakingManager : MonoBehaviour
     private float searchStartTimeForProgress; // separate from existing searchStartTime logic
     private bool isPracticeStarting = false;
     private float practiceStartTime;
+    
+    // Relay join code published by host in lobby data
+    private string relayJoinCode = string.Empty;
     
     // Host-host stalemate breaker
     private float lastHostSwitchAttemptTime = 0f;
@@ -442,8 +451,13 @@ public class MatchmakingManager : MonoBehaviour
             playerProgress?.SaveSelectedDeckForArena("global", currentDeck.Select(c => c.cardID).ToList());
         }
         
-        // Save player side preference for GameManager to use
-        PlayerPrefs.SetInt("LocalPlayerIsPlayer1", localPlayerIsPlayer1 ? 1 : 0);
+        // Save player side for GameManager / PlayerCameraManager
+        bool finalLocalIsP1 = localPlayerIsPlayer1;
+        if (useRealMultiplayer && currentLobby != null)
+        {
+            try { finalLocalIsP1 = (currentLobby.HostId == AuthenticationService.Instance.PlayerId); } catch { }
+        }
+        PlayerPrefs.SetInt("LocalPlayerIsPlayer1", finalLocalIsP1 ? 1 : 0);
         PlayerPrefs.SetString("LocalPlayerUsername", localPlayerUsername);
         PlayerPrefs.SetString("OpponentUsername", "AI Bot");
         PlayerPrefs.Save();
@@ -492,6 +506,7 @@ public class MatchmakingManager : MonoBehaviour
 
         if (!string.IsNullOrEmpty(selectedArena.sceneName))
         {
+            // Practice is offline, so a local scene load is correct here
             SceneManager.LoadScene(selectedArena.sceneName);
         }
         else
@@ -625,6 +640,7 @@ public class MatchmakingManager : MonoBehaviour
         }
         else
         {
+            // Offline or simulation: load locally
             SceneManager.LoadScene(selectedArena.sceneName);
         }
     }
@@ -1123,24 +1139,176 @@ public class MatchmakingManager : MonoBehaviour
         // Small delay for dramatic effect
         yield return new WaitForSeconds(1f);
         
-        // Start the networking and load the scene
-        if (NetworkManager.Singleton != null)
+        // Start networking (Relay-backed) and transition
+        _ = StartNetworkingAndEnterSceneAsync();
+    }
+
+    private async System.Threading.Tasks.Task StartNetworkingAndEnterSceneAsync()
+    {
+        if (NetworkManager.Singleton == null)
         {
-            // Start as host if we created the lobby, client if we joined
-            bool isHost = currentLobby.HostId == AuthenticationService.Instance.PlayerId;
-            
-            if (isHost)
+            Debug.LogError("NetworkManager not found; cannot start networking.");
+            return;
+        }
+
+        // Ensure all card prefabs are registered on this client before starting networking
+        try { RegisterNetworkPrefabs(); } catch { }
+
+        bool isHostRole = currentLobby != null && currentLobby.HostId == (AuthenticationService.Instance?.PlayerId ?? "");
+
+        try
+        {
+            if (isHostRole)
             {
-                NetworkManager.Singleton.StartHost();
+                bool ok = await SetupRelayAndStartHostAsync();
+                if (!ok)
+                {
+                    Debug.LogWarning("Relay host setup failed; falling back to direct host.");
+                    NetworkManager.Singleton.StartHost();
+                }
             }
             else
             {
-                NetworkManager.Singleton.StartClient();
+                bool ok = await SetupRelayAndStartClientAsync();
+                if (!ok)
+                {
+                    Debug.LogWarning("Relay client setup failed; falling back to direct client.");
+                    NetworkManager.Singleton.StartClient();
+                }
             }
         }
-        
-        // Load scene (host) or let server sync clients
+        catch (System.Exception ex)
+        {
+            Debug.LogError($"Failed to start networking: {ex.Message}");
+            return;
+        }
+
+        // Load scene (host) or let server synchronize clients
         LoadArenaSceneNetworkAware();
+    }
+
+    private void RegisterNetworkPrefabs()
+    {
+        if (NetworkManager.Singleton == null) return;
+        var dm = deckManager != null ? deckManager : FindFirstObjectByType<DeckManager>();
+        if (dm == null || dm.allCards == null) return;
+        foreach (var c in dm.allCards)
+        {
+            if (c == null) continue;
+            if (c.unitPrefab != null)
+            {
+                try { NetworkManager.Singleton.AddNetworkPrefab(c.unitPrefab); } catch { }
+            }
+            if (c.spawnUnitPrefab != null)
+            {
+                try { NetworkManager.Singleton.AddNetworkPrefab(c.spawnUnitPrefab); } catch { }
+            }
+        }
+    }
+
+    private async System.Threading.Tasks.Task<bool> SetupRelayAndStartHostAsync()
+    {
+#if UNITY_RELAY_INSTALLED
+        var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
+        if (transport == null)
+        {
+            Debug.LogError("UnityTransport missing on NetworkManager; cannot configure Relay.");
+            return false;
+        }
+        try
+        {
+            // Allocate for 1 client (2 total players)
+            Allocation alloc = await RelayService.Instance.CreateAllocationAsync(1);
+            string joinCode = await RelayService.Instance.GetJoinCodeAsync(alloc.AllocationId);
+            relayJoinCode = joinCode;
+
+            if (currentLobby != null)
+            {
+                var updateTask = LobbyService.Instance.UpdateLobbyAsync(currentLobby.Id, new UpdateLobbyOptions
+                {
+                    Data = new Dictionary<string, DataObject>
+                    {
+                        {"joinCode", new DataObject(DataObject.VisibilityOptions.Public, joinCode)}
+                    }
+                });
+                await updateTask;
+                var refreshed = await LobbyService.Instance.GetLobbyAsync(currentLobby.Id);
+                currentLobby = refreshed;
+            }
+
+            var serverData = new RelayServerData(alloc, "dtls");
+            transport.SetRelayServerData(serverData);
+            NetworkManager.Singleton.StartHost();
+            Debug.Log($"Relay host started. JoinCode: {joinCode}");
+            return true;
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogError($"Relay host setup failed: {ex.Message}");
+            return false;
+        }
+#else
+        // Fallback: start host directly when Relay package is not installed
+        NetworkManager.Singleton.StartHost();
+        return true;
+#endif
+    }
+
+    private async System.Threading.Tasks.Task<bool> SetupRelayAndStartClientAsync()
+    {
+#if UNITY_RELAY_INSTALLED
+        var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
+        if (transport == null)
+        {
+            Debug.LogError("UnityTransport missing on NetworkManager; cannot configure Relay.");
+            return false;
+        }
+        try
+        {
+            string joinCode = relayJoinCode;
+            if (currentLobby != null)
+            {
+                var refreshed = await LobbyService.Instance.GetLobbyAsync(currentLobby.Id);
+                currentLobby = refreshed;
+                if (currentLobby.Data != null && currentLobby.Data.ContainsKey("joinCode"))
+                {
+                    joinCode = currentLobby.Data["joinCode"].Value;
+                }
+            }
+            if (string.IsNullOrEmpty(joinCode))
+            {
+                Debug.LogWarning("Join code not yet available; waiting...");
+                await System.Threading.Tasks.Task.Delay(500);
+                if (currentLobby != null)
+                {
+                    var refreshed2 = await LobbyService.Instance.GetLobbyAsync(currentLobby.Id);
+                    currentLobby = refreshed2;
+                    if (currentLobby.Data != null && currentLobby.Data.ContainsKey("joinCode"))
+                        joinCode = currentLobby.Data["joinCode"].Value;
+                }
+            }
+            if (string.IsNullOrEmpty(joinCode))
+            {
+                Debug.LogError("Relay join code missing; cannot join host.");
+                return false;
+            }
+            JoinAllocation joinAlloc = await RelayService.Instance.JoinAllocationAsync(joinCode);
+            var serverData = new RelayServerData(joinAlloc, "dtls");
+            transport.SetRelayServerData(serverData);
+            NetworkManager.Singleton.StartClient();
+            Debug.Log("Relay client started.");
+            return true;
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogError($"Relay client setup failed: {ex.Message}");
+            return false;
+        }
+#else
+        // Fallback: start client directly when Relay package is not installed
+        NetworkManager.Singleton.StartClient();
+        return true;
+#endif
     }
 
     async void LeaveLobby()
@@ -1225,17 +1393,15 @@ public class MatchmakingManager : MonoBehaviour
             }
         }
         
-        // Randomly assign player sides for multiplayer
-        if (randomizePlayerSides && isSearching)
+        // Assign deterministic sides for multiplayer: Host = Player1, Client = Player2
+        if (useRealMultiplayer && currentLobby != null)
         {
-            localPlayerIsPlayer1 = Random.Range(0, 2) == 0; // 50/50 chance
+            bool iAmHost = false;
+            try { iAmHost = (currentLobby.HostId == AuthenticationService.Instance.PlayerId); } catch { }
+            localPlayerIsPlayer1 = iAmHost; // Host gets Player1, Client gets Player2
             string playerSide = localPlayerIsPlayer1 ? "Player 1" : "Player 2";
-            Debug.Log($"Randomly assigned: Local player is {playerSide}");
-            
-            // Temporarily show assignment in status
+            Debug.Log($"Assigned (deterministic): Local player is {playerSide} (Host={iAmHost})");
             SetStatus($"Assigned as {playerSide}! Match starting...");
-            
-            // Update toggle to match random assignment (visual feedback only)
             if (playerSideToggle != null)
             {
                 playerSideToggle.SetIsOnWithoutNotify(localPlayerIsPlayer1 == localIsPlayer1WhenToggleOn);
@@ -1706,17 +1872,9 @@ public class MatchmakingManager : MonoBehaviour
         // Proceed to match start (different path for real vs simulated)
         if (useRealMultiplayer)
         {
-            // For real multiplayer we may need to start network before scene load if not already
-            // If already joining, skip. Else start host/client depending on lobby role.
-            // Reuse JoinMatch logic if we have a lobby
             if (currentLobby != null && NetworkManager.Singleton != null && !NetworkManager.Singleton.IsClient && !NetworkManager.Singleton.IsServer)
             {
-                // Start host/client prior to scene load
-                bool isHost = currentLobby.HostId == AuthenticationService.Instance.PlayerId;
-                if (isHost)
-                    NetworkManager.Singleton.StartHost();
-                else
-                    NetworkManager.Singleton.StartClient();
+                _ = StartNetworkingAndEnterSceneAsync();
             }
         }
 

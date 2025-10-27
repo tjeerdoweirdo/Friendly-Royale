@@ -29,6 +29,9 @@ public class HandUI : MonoBehaviour
     private Card selectedCard = null;
     private int selectedCardIndex = -1;
     private Camera mainCamera;
+    [Header("Debug")]
+    [Tooltip("When true, bypass network and force local spawn for debugging placement issues")]
+    public bool debugForceLocalSpawn = false;
 
     private bool subscribedToDeck = false;
     private bool subscribedToCoin = false;
@@ -405,6 +408,13 @@ public class HandUI : MonoBehaviour
         {
             placementSystem.EndCardPlacement();
         }
+
+        // Hide any network placement preview
+        var netPreview = NetworkCardPlacementSystem.Instance;
+        if (netPreview != null)
+        {
+            netPreview.HidePlacementPreview();
+        }
         
         // Remove visual feedback
         if (selectedCardIndex >= 0)
@@ -439,27 +449,34 @@ public class HandUI : MonoBehaviour
                 return; // Clicked on UI, ignore
             }
             
-            // Try to place the card
-                    Vector3 worldPos;
-                    if (placementSystem != null && placementSystem.TryGetPlacementPosition(ray, selectedCard, out worldPos))
-                    {
-                        PlaceSelectedCard(worldPos);
-                    }
-                    else
-                    {
-                        // Try network placement system ray helper if available
-                        var net = NetworkCardPlacementSystem.Instance;
-                        if (net != null)
-                        {
-                            worldPos = net.GetWorldPositionFromScreen(screenPos);
-                            if (worldPos != Vector3.zero && net.IsValidPlacementPosition(worldPos, selectedCard, Unit.Faction.Player, Unity.Netcode.NetworkManager.Singleton != null ? Unity.Netcode.NetworkManager.Singleton.LocalClientId : 0))
-                            {
-                                PlaceSelectedCard(worldPos);
-                                return;
-                            }
-                        }
-                        Debug.Log("[HandUI] Invalid placement position.");
-                        // Could add audio/visual feedback here for invalid placement
+            // Compute a world position, then validate via the network-aware system if available (always as Player for local-friendly checks)
+            Vector3 worldPos = Vector3.zero;
+            bool canPlace = false;
+            var net = NetworkCardPlacementSystem.Instance;
+            if (net != null)
+            {
+                worldPos = net.GetWorldPositionFromScreen(screenPos);
+                if (worldPos != Vector3.zero)
+                {
+                    ulong cid = Unity.Netcode.NetworkManager.Singleton != null ? Unity.Netcode.NetworkManager.Singleton.LocalClientId : 0UL;
+                    canPlace = net.IsValidPlacementPosition(worldPos, selectedCard, Unit.Faction.Player, cid);
+                }
+            }
+
+            // Fallback to local placement system if needed
+            if (!canPlace && placementSystem != null)
+            {
+                canPlace = placementSystem.TryGetPlacementPosition(ray, selectedCard, out worldPos);
+            }
+
+            if (canPlace)
+            {
+                PlaceSelectedCard(worldPos);
+            }
+            else
+            {
+                Debug.Log("[HandUI] Invalid placement position.");
+                // Could add audio/visual feedback here for invalid placement
             }
         }
         
@@ -469,14 +486,29 @@ public class HandUI : MonoBehaviour
             ExitPlacementMode();
         }
         
-        // Update placement preview
-        if (placementSystem != null)
+        // Update placement preview (prefer network-aware indicator so Player 2 sees correct feedback)
         {
             Vector2 mousePos = Input.mousePosition;
             Ray ray = mainCamera.ScreenPointToRay(mousePos);
-            Vector3 worldPos;
-            bool isValid = placementSystem.TryGetPlacementPosition(ray, selectedCard, out worldPos);
-            placementSystem.UpdatePlacementPreview(worldPos, isValid);
+
+            var net = NetworkCardPlacementSystem.Instance;
+            if (net != null)
+            {
+                Vector3 worldPos = net.GetWorldPositionFromScreen(mousePos);
+                bool isValid = worldPos != Vector3.zero;
+                if (isValid)
+                {
+                    ulong cid = Unity.Netcode.NetworkManager.Singleton != null ? Unity.Netcode.NetworkManager.Singleton.LocalClientId : 0UL;
+                    isValid = net.IsValidPlacementPosition(worldPos, selectedCard, Unit.Faction.Player, cid);
+                }
+                net.ShowPlacementPreview(worldPos, selectedCard, Unit.Faction.Player, isValid);
+            }
+            else if (placementSystem != null)
+            {
+                Vector3 worldPos;
+                bool isValid = placementSystem.TryGetPlacementPosition(ray, selectedCard, out worldPos);
+                placementSystem.UpdatePlacementPreview(worldPos, isValid);
+            }
         }
     }
     
@@ -501,21 +533,60 @@ public class HandUI : MonoBehaviour
                 
                 // Use NetworkCardPlacementSystem for proper multiplayer support
                 NetworkCardPlacementSystem networkPlacement = NetworkCardPlacementSystem.Instance;
-                if (networkPlacement != null)
+                if (networkPlacement != null && !debugForceLocalSpawn)
                 {
+                    Debug.Log("[HandUI] Using NetworkCardPlacementSystem.RequestCardPlacement (multiplayer path)");
                     networkPlacement.RequestCardPlacement(worldPosition, selectedCard, Unit.Faction.Player);
                 }
                 else if (cardSpawner != null)
                 {
                     // Fallback: if networking is running, use spawner ServerRpc; else local spawn
                     bool netReady = Unity.Netcode.NetworkManager.Singleton != null && Unity.Netcode.NetworkManager.Singleton.IsListening;
-                    if (netReady)
+                    if (debugForceLocalSpawn)
                     {
-                        ulong clientId = Unity.Netcode.NetworkManager.Singleton.LocalClientId;
-                        cardSpawner.RequestSpawnServerRpc(worldPosition, selectedCard.cardID, Unit.Faction.Player, clientId);
+                        Debug.Log("[HandUI] debugForceLocalSpawn: forcing local spawn via CardSpawner.SpawnUnitAtPosition");
+                        StartCoroutine(cardSpawner.SpawnUnitAtPosition(selectedCard, worldPosition, Unit.Faction.Player));
+                    }
+                    else if (netReady)
+                    {
+                        var nm = Unity.Netcode.NetworkManager.Singleton;
+                        bool isHost = nm.IsServer; // server/host side
+                        ulong clientId = nm.LocalClientId;
+                        if (isHost)
+                        {
+                            Debug.Log("[HandUI] Host detected: spawning directly via CardSpawner.SpawnAuthoritative");
+                            cardSpawner.SpawnAuthoritative(selectedCard.cardID, worldPosition, Unit.Faction.Player, clientId);
+                        }
+                        else
+                        {
+                            // Client path: ensure spawner has a spawned NetworkObject before calling ServerRpc
+                            var no = cardSpawner.GetComponent<Unity.Netcode.NetworkObject>();
+                            if (no == null || !no.IsSpawned)
+                            {
+                                Debug.LogError("[HandUI] CardSpawner has no spawned NetworkObject on client; cannot send ServerRpc. Ensure your arena scene is loaded via NGO and CardSpawner has a NetworkObject component.");
+                                // Try network placement system as a more robust route (server will find spawner)
+                                var net = NetworkCardPlacementSystem.Instance;
+                                if (net != null)
+                                {
+                                    Debug.Log("[HandUI] Redirecting to NetworkCardPlacementSystem.RequestCardPlacement (client -> server)");
+                                    net.RequestCardPlacement(worldPosition, selectedCard, Unit.Faction.Player);
+                                }
+                                else
+                                {
+                                    Debug.LogWarning("[HandUI] No NetworkCardPlacementSystem in scene; falling back to local spawn (client-only, not authoritative)");
+                                    StartCoroutine(cardSpawner.SpawnUnitAtPosition(selectedCard, worldPosition, Unit.Faction.Player));
+                                }
+                            }
+                            else
+                            {
+                                Debug.Log("[HandUI] Network active: sending RequestSpawnServerRpc to CardSpawner");
+                                cardSpawner.RequestSpawnServerRpc(worldPosition, selectedCard.cardID, Unit.Faction.Player, clientId);
+                            }
+                        }
                     }
                     else
                     {
+                        Debug.Log("[HandUI] Network not active: local spawn via CardSpawner.SpawnUnitAtPosition");
                         StartCoroutine(cardSpawner.SpawnUnitAtPosition(selectedCard, worldPosition, Unit.Faction.Player));
                     }
                 }

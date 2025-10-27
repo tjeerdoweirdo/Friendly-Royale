@@ -258,17 +258,8 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
     
     private bool CheckFactionPlacementRules(Vector3 position, Unit.Faction playerFaction, ulong clientId)
     {
-        // TODO: Add faction-specific placement rules
-        // For example, players can only place cards on their side of the arena
-        
-        // Simple rule: players can only place cards within their range
-        if (playerFaction == Unit.Faction.Player)
-        {
-            // Find player's spawn area and check distance
-            // This is a simplified check - you might want to make it more sophisticated
-            return true; // Placeholder
-        }
-        
+        // Relaxed: allow placement anywhere that passes area/ground/overlap checks.
+        // Server will assign ownership/faction and gameplay systems enforce behavior.
         return true;
     }
     
@@ -277,27 +268,37 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
     /// </summary>
     public void ShowPlacementPreview(Vector3 position, Card card, Unit.Faction playerFaction, bool isValid)
     {
-        // Only show preview on the local client
-        if (!IsOwner) return;
-        
-        if (currentIndicator != null)
-        {
-            Destroy(currentIndicator);
-        }
-        
+        // Preview is strictly local UX; do not gate on network ownership
         GameObject indicatorPrefab = isValid ? validPlacementIndicator : invalidPlacementIndicator;
         Color indicatorColor = isValid ? validColor : invalidColor;
-        
-        if (indicatorPrefab != null)
+
+        if (indicatorPrefab == null)
         {
+            // No prefab assigned, nothing to show
+            return;
+        }
+
+        // If indicator not present or prefab type changed (valid/invalid), recreate
+        bool needsNewInstance = currentIndicator == null ||
+                                (isValid && currentIndicator.name != validPlacementIndicator.name + "(Clone)") ||
+                                (!isValid && currentIndicator.name != invalidPlacementIndicator.name + "(Clone)");
+
+        if (needsNewInstance)
+        {
+            if (currentIndicator != null) Destroy(currentIndicator);
             currentIndicator = Instantiate(indicatorPrefab, position, Quaternion.identity);
-            
-            // Set color
-            Renderer renderer = currentIndicator.GetComponent<Renderer>();
-            if (renderer != null)
-            {
-                renderer.material.color = indicatorColor;
-            }
+        }
+        else
+        {
+            // Just move existing indicator
+            currentIndicator.transform.position = position;
+        }
+
+        // Update color if renderer available
+        var renderer = currentIndicator.GetComponent<Renderer>();
+        if (renderer != null)
+        {
+            renderer.material.color = indicatorColor;
         }
     }
     
@@ -358,7 +359,35 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
             return;
         }
 
-        // In multiplayer, always ask the server to validate and broadcast the spawn
+        // If we are the server/host, execute placement immediately on server to avoid RPC dependency
+        if (IsServer)
+        {
+            Debug.Log($"[NetworkCardPlacementSystem] Server-side direct placement for {card.cardName} at {position}");
+            // Mirror server RPC logic inline
+            var spawner = FindFirstObjectByType<CardSpawner>();
+            if (spawner == null)
+            {
+                Debug.LogError("[NetworkCardPlacementSystem] No CardSpawner found on server; cannot place card.");
+                return;
+            }
+            // Server determines faction as Player for host actions
+            var serverFaction = Unit.Faction.Player;
+            // Basic validation using server rules
+            bool isValid = ValidatePositionOnServer(position, card, serverFaction, clientId);
+            if (!isValid)
+            {
+                Debug.LogWarning("[NetworkCardPlacementSystem] Server-side validation failed for placement.");
+                return;
+            }
+            spawner.SpawnAuthoritative(card.cardID, position, serverFaction, clientId);
+            return;
+        }
+
+        // In multiplayer client, ask the server to validate and broadcast the spawn
+        if (NetworkObject == null || !NetworkObject.IsSpawned)
+        {
+            Debug.LogError("[NetworkCardPlacementSystem] Cannot send ServerRpc: this component's NetworkObject is not spawned. Ensure it has a NetworkObject and the scene is loaded by NGO.");
+        }
         RequestCardPlacementServerRpc(position, card.cardID, playerFaction, clientId);
         Debug.Log($"[NetworkCardPlacementSystem] Requested placement: {card.cardName} at {position}");
     }
@@ -425,8 +454,15 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
             return;
         }
         
+        // Server determines authoritative faction based on which client placed it
+        Unit.Faction serverFaction = playerFaction;
+        if (NetworkManager.Singleton != null)
+        {
+            serverFaction = (clientId == NetworkManager.ServerClientId) ? Unit.Faction.Player : Unit.Faction.Enemy;
+        }
+
         // Validate position
-        bool isValid = IsValidPlacementPosition(position, card, playerFaction, clientId);
+        bool isValid = IsValidPlacementPosition(position, card, serverFaction, clientId);
         string message = isValid ? "Valid placement" : "Invalid placement";
         
         SendValidationResultClientRpc(isValid, message, clientId);
@@ -438,6 +474,8 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
     [ServerRpc(RequireOwnership = false)]
     public void RequestCardPlacementServerRpc(Vector3 position, string cardID, Unit.Faction playerFaction, ulong clientId)
     {
+        Debug.Log($"[NetworkCardPlacementSystem] RequestCardPlacementServerRpc invoked. IsServer={IsServer}, IsClient={IsClient}, LocalClientId={(NetworkManager.Singleton!=null?NetworkManager.Singleton.LocalClientId:0)}, placingClient={clientId}");
+
         // Find card data
         Card card = FindCardData(cardID);
         if (card == null)
@@ -447,8 +485,15 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
             return;
         }
         
+        // Compute authoritative faction from placing client
+        Unit.Faction serverFaction = playerFaction;
+        if (NetworkManager.Singleton != null)
+        {
+            serverFaction = (clientId == NetworkManager.ServerClientId) ? Unit.Faction.Player : Unit.Faction.Enemy;
+        }
+
         // Validate the placement using server-side validation
-        bool isValid = ValidatePositionOnServer(position, card, playerFaction, clientId);
+        bool isValid = ValidatePositionOnServer(position, card, serverFaction, clientId);
         
         if (isValid)
         {
@@ -463,14 +508,31 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
                     return;
                 }
             }
-            
-            // Spawn the card for all clients
-            SpawnCardForAllClientsClientRpc(position, cardID, playerFaction, clientId);
-            
+
+            // Prefer authoritative spawn via CardSpawner on the server
+            var spawner = FindFirstObjectByType<CardSpawner>();
+            if (spawner != null)
+            {
+                // We are on the server here; spawn authoritatively with the mapped faction
+                if (IsServer)
+                {
+                    spawner.SpawnAuthoritative(cardID, position, serverFaction, clientId);
+                }
+                else
+                {
+                    spawner.RequestSpawnServerRpc(position, cardID, serverFaction, clientId);
+                }
+            }
+            else
+            {
+                // Fallback to broadcast instantiate if no spawner found (should not happen)
+                SpawnCardForAllClientsClientRpc(position, cardID, serverFaction, clientId);
+            }
+
             // Notify the requesting client of success
             NotifyPlacementResultClientRpc(true, "Card placed successfully", clientId);
-            
-            Debug.Log($"[NetworkCardPlacementSystem] Successfully placed card {cardID} for client {clientId} at {position}");
+
+            Debug.Log($"[NetworkCardPlacementSystem] Successfully placed card {cardID} for client {clientId} at {position} (faction={serverFaction})");
         }
         else
         {
@@ -516,7 +578,7 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
     /// Spawn a card for all clients (called from server)
     /// </summary>
     [ClientRpc]
-    private void SpawnCardForAllClientsClientRpc(Vector3 position, string cardID, Unit.Faction playerFaction, ulong placingClientId)
+    public void SpawnCardForAllClientsClientRpc(Vector3 position, string cardID, Unit.Faction serverFaction, ulong placingClientId)
     {
         // Find the card data
         Card card = FindCardData(cardID);
@@ -534,11 +596,13 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
             return;
         }
         
-        // Spawn the card at the specified position
-        StartCoroutine(spawner.SpawnUnitAtPosition(card, position, playerFaction));
+        // Spawn the card at the specified position (local faction will be computed client-side if needed)
+        ulong localId = NetworkManager.Singleton != null ? NetworkManager.Singleton.LocalClientId : 0UL;
+        var localFaction = (placingClientId == localId) ? Unit.Faction.Player : Unit.Faction.Enemy;
+        StartCoroutine(spawner.SpawnUnitAtPosition(card, position, localFaction));
         
-        // Show visual feedback for the placement
-        ShowNetworkPlacementFeedback(position, card, playerFaction, placingClientId);
+    // Show visual feedback for the placement (faction local to this client)
+    ShowNetworkPlacementFeedback(position, card, localFaction, placingClientId);
         
         Debug.Log($"[NetworkCardPlacementSystem] Spawned card {cardID} for client {placingClientId} at {position}");
     }
@@ -582,5 +646,26 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
         }
         Debug.LogWarning($"[NetworkCardPlacementSystem] Card data not found for id '{cardID}'. Ensure it exists in DeckManager.allCards or is loadable via Resources.");
         return null;
+    }
+
+    [ClientRpc]
+    public void FinalizeSpawnClientRpc(ulong networkObjectId, string cardID, int level, Vector3 worldPos, bool useLeftPath, ulong placerClientId)
+    {
+        if (!NetworkManager.Singleton) return;
+        if (!NetworkManager.Singleton.SpawnManager.SpawnedObjects.TryGetValue(networkObjectId, out var netObj)) return;
+        var go = netObj.gameObject;
+        var card = FindCardData(cardID);
+        if (card == null) return;
+
+        // Compute local faction relative to this client
+        ulong localId = NetworkManager.Singleton.LocalClientId;
+        var localFaction = (placerClientId == localId) ? Unit.Faction.Player : Unit.Faction.Enemy;
+
+        // Use CardSpawner to apply configuration (paths, towers, stats)
+        var spawner = FindFirstObjectByType<CardSpawner>();
+        if (spawner != null)
+        {
+            spawner.ConfigureSpawnedObject(go, card, localFaction, level, worldPos, useLeftPath);
+        }
     }
 }
