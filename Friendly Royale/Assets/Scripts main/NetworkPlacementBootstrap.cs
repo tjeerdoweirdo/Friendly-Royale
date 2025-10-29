@@ -12,6 +12,16 @@ public static class NetworkPlacementBootstrap
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void EnsurePlacementSystem()
     {
+        // Skip entirely in offline/practice mode
+        try
+        {
+            if (GameModeManager.Instance != null && GameModeManager.Instance.IsOfflineMode())
+            {
+                return;
+            }
+        }
+        catch { /* ignore */ }
+
         // Only the server/host should create and spawn the networked object
         if (NetworkManager.Singleton == null)
         {
@@ -54,6 +64,13 @@ public static class NetworkPlacementBootstrap
 
     private static void OnServerStarted()
     {
+        // Skip in offline/practice
+        try
+        {
+            if (GameModeManager.Instance != null && GameModeManager.Instance.IsOfflineMode()) return;
+        }
+        catch { }
+
         // Server has started; ensure a spawned placement system exists
         if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
 
