@@ -109,10 +109,35 @@ public class BattleNetworkAutoManager : MonoBehaviour
             }
         }
 
-        // Fallback: if auto-start was requested but we're still not listening, retry shortly (handles race conditions)
-        if (autoFlag == 1 && !nm.IsListening)
+        // Correct role if another script started server-only but we need Host
+        if (autoFlag == 1)
         {
-            StartCoroutine(RetryAutoStartBySide());
+            int sideForAuto = 1;
+            try { sideForAuto = PlayerPrefs.GetInt("LocalPlayerIsPlayer1", 1); } catch { sideForAuto = 1; }
+            if (sideForAuto == 1)
+            {
+                if (nm.IsServer && !nm.IsClient)
+                {
+                    Debug.LogWarning("[BattleNetworkAutoManager] Detected Server-only but Host required. Restarting as Host...");
+                    StartCoroutine(RestartAsHost());
+                }
+                else if (!nm.IsListening && !nm.IsServer && !nm.IsClient)
+                {
+                    TryAutoStart(StartMode.Host);
+                }
+            }
+            else
+            {
+                if (!nm.IsListening && !nm.IsServer && !nm.IsClient)
+                {
+                    TryAutoStart(StartMode.Client);
+                }
+            }
+            // If auto-start was requested but we're still not listening, retry shortly (handles race conditions)
+            if (!nm.IsListening)
+            {
+                StartCoroutine(RetryAutoStartBySide());
+            }
         }
 
         // Clear the auto-start flag so subsequent scenes don't accidentally auto-start
@@ -267,6 +292,30 @@ public class BattleNetworkAutoManager : MonoBehaviour
             Debug.Log("[BattleNetworkAutoManager] Retry: StartClient()");
             nm.StartClient();
         }
+    }
+
+    private System.Collections.IEnumerator RestartAsHost()
+    {
+        var nm = NetworkManager.Singleton;
+        if (nm == null) yield break;
+        // Gracefully stop server-only, wait a frame, then start host
+        nm.Shutdown();
+        yield return null;
+        // Ensure transport and approval settings
+        if (nm.GetComponent<UnityTransport>() == null)
+        {
+            nm.gameObject.AddComponent<UnityTransport>();
+        }
+        try
+        {
+            if (nm.NetworkConfig.ConnectionApproval && nm.ConnectionApprovalCallback == null)
+            {
+                nm.NetworkConfig.ConnectionApproval = false;
+            }
+        }
+        catch { }
+        Debug.Log("[BattleNetworkAutoManager] Starting Host after server-only shutdown...");
+        nm.StartHost();
     }
 
     // Convenience context menu for quick testing in Editor

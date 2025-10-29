@@ -18,7 +18,14 @@ public class ServerActivator : MonoBehaviour
     async void Start()
     {
         await InitializeUnityServices();
-        
+        // If matchmaking requested an auto network start, defer to BattleNetworkAutoManager's logic
+        int autoFlag = 0;
+        try { autoFlag = PlayerPrefs.GetInt("AutoNetworkStart", 0); } catch { autoFlag = 0; }
+        if (autoFlag == 1)
+        {
+            return;
+        }
+
         if (autoStartAsServer)
         {
             StartServer();
