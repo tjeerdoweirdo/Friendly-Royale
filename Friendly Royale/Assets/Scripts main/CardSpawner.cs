@@ -24,7 +24,7 @@ public class CardSpawner : NetworkBehaviour
     [Tooltip("Enable networking for card spawning")]
     public bool enableNetworking = true;
     [Tooltip("If true, the server will broadcast a ClientRpc for clients to spawn locally instead of spawning a shared NetworkObject. This makes placement work even if scenes/prefabs differ.")]
-    public bool alwaysClientSideSpawn = true;
+    public bool alwaysClientSideSpawn = false;
     
     // Network state
     private bool isNetworkEnabled => enableNetworking && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
@@ -144,9 +144,14 @@ public class CardSpawner : NetworkBehaviour
                 net.Spawn();
                 // Server config uses server-side faction for gameplay; clients will re-map via placement system RPC
                 ConfigureSpawnedObject(go, card, faction, level, position, useLeftPath);
-                if (NetworkCardPlacementSystem.Instance != null)
+                var ncps = FindSpawnedPlacementSystem();
+                if (ncps != null)
                 {
-                    NetworkCardPlacementSystem.Instance.FinalizeSpawnClientRpc(net.NetworkObjectId, cardID, level, position, useLeftPath, clientId);
+                    ncps.FinalizeSpawnClientRpc(net.NetworkObjectId, cardID, level, position, useLeftPath, clientId);
+                }
+                else
+                {
+                    Debug.LogError("[CardSpawner] No spawned NetworkCardPlacementSystem found to finalize spawn.");
                 }
             }
             else
@@ -162,9 +167,14 @@ public class CardSpawner : NetworkBehaviour
                     net.Spawn();
                     // Server config uses server-side faction for gameplay; clients will re-map via placement system RPC
                     ConfigureSpawnedObject(go, card, faction, level, pos, left);
-                    if (NetworkCardPlacementSystem.Instance != null)
+                    var ncps = FindSpawnedPlacementSystem();
+                    if (ncps != null)
                     {
-                        NetworkCardPlacementSystem.Instance.FinalizeSpawnClientRpc(net.NetworkObjectId, cardID, level, pos, left, clientId);
+                        ncps.FinalizeSpawnClientRpc(net.NetworkObjectId, cardID, level, pos, left, clientId);
+                    }
+                    else
+                    {
+                        Debug.LogError("[CardSpawner] No spawned NetworkCardPlacementSystem found to finalize spawn.");
                     }
                 }
             }
@@ -172,12 +182,33 @@ public class CardSpawner : NetworkBehaviour
         else
         {
             // Fallback to broadcast instantiate via placement system (works even if this spawner isn't a networked object)
-            Debug.Log($"[CardSpawner] SpawnAuthoritative fallback to placement system ClientRpc for cardID='{cardID}'");
-            if (NetworkCardPlacementSystem.Instance != null && NetworkCardPlacementSystem.Instance.IsServer)
+            string reason = !IsNetworkReady() ? "network not ready" : (!prefabHasNetObj ? "prefab missing NetworkObject" : (alwaysClientSideSpawn ? "alwaysClientSideSpawn=true" : "unknown"));
+            Debug.Log($"[CardSpawner] SpawnAuthoritative fallback to placement system ClientRpc for cardID='{cardID}' (reason: {reason})");
+            var ncps = FindSpawnedPlacementSystem();
+            if (ncps != null && ncps.IsServer)
             {
-                NetworkCardPlacementSystem.Instance.SpawnCardForAllClientsClientRpc(position, cardID, faction, clientId);
+                ncps.SpawnCardForAllClientsClientRpc(position, cardID, faction, clientId);
+            }
+            else
+            {
+                Debug.LogError("[CardSpawner] No spawned NetworkCardPlacementSystem available to broadcast client spawns.");
             }
         }
+    }
+
+    private NetworkCardPlacementSystem FindSpawnedPlacementSystem()
+    {
+        var all = FindObjectsByType<NetworkCardPlacementSystem>(FindObjectsSortMode.None);
+        foreach (var sys in all)
+        {
+            if (sys == null) continue;
+            var no = sys.GetComponent<NetworkObject>();
+            if (no != null && no.IsSpawned)
+            {
+                return sys;
+            }
+        }
+        return null;
     }
 
     [ServerRpc(RequireOwnership = false)]

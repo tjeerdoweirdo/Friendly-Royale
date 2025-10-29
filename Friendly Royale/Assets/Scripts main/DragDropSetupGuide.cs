@@ -264,13 +264,39 @@ public class DragDropSetupGuide : MonoBehaviour
     {
         if (networkPlacement == null)
         {
-            Log("🔧 Creating NetworkCardPlacementSystem...");
-            GameObject go = new GameObject("NetworkCardPlacementSystem");
-            go.transform.SetParent(transform);
-            networkPlacement = go.AddComponent<NetworkCardPlacementSystem>();
-            if (go.GetComponent<Unity.Netcode.NetworkObject>() == null)
+            var nm = NetworkManager.Singleton;
+            bool netActive = nm != null && nm.IsListening;
+            bool isServer = netActive && nm.IsServer;
+
+            if (netActive && !isServer)
             {
-                go.AddComponent<Unity.Netcode.NetworkObject>();
+                // In online client: do not create a local instance. Server should spawn it.
+                // Try to find one if it was spawned already.
+                networkPlacement = FindFirstObjectByType<NetworkCardPlacementSystem>();
+                if (networkPlacement == null)
+                {
+                    Log("⌛ Waiting for server to spawn NetworkCardPlacementSystem (client).");
+                    return;
+                }
+            }
+            else
+            {
+                // Offline or server: create (and spawn if server)
+                Log("🔧 Creating NetworkCardPlacementSystem...");
+                GameObject go = new GameObject("NetworkCardPlacementSystem");
+                go.transform.SetParent(transform);
+                networkPlacement = go.AddComponent<NetworkCardPlacementSystem>();
+                var netObj = go.GetComponent<Unity.Netcode.NetworkObject>();
+                if (netActive && isServer)
+                {
+                    if (netObj == null) netObj = go.AddComponent<Unity.Netcode.NetworkObject>();
+                    if (!netObj.IsSpawned) netObj.Spawn();
+                }
+                else
+                {
+                    // Offline practice: network object not required, but safe to add
+                    if (netObj == null) go.AddComponent<Unity.Netcode.NetworkObject>();
+                }
             }
         }
 

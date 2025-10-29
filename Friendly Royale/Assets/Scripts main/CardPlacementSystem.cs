@@ -109,7 +109,13 @@ public class CardPlacementSystem : MonoBehaviour
 
     private void CreateRangeIndicatorIfNeeded(Card card)
     {
-        if (rangeCircleIndicator == null || card == null) return;
+        if (card == null) return;
+        if (rangeCircleIndicator == null)
+        {
+            // Helpful hint so users know why there is no range circle
+            Debug.LogWarning("[CardPlacementSystem] No rangeCircleIndicator assigned. Assign a circle prefab to show range while placing.");
+            return;
+        }
         if (card.baseRange <= 1.5f && card.cardType != CardType.Building) return;
         if (currentRangeCircle != null) return;
 

@@ -24,6 +24,17 @@ public class HandUI : MonoBehaviour
     [Tooltip("CardPlacementSystem for click-to-place functionality")]
     public CardPlacementSystem placementSystem;
     
+    [Header("Placement Backend (optional)")]
+    [Tooltip("Explicit NetworkCardPlacementSystem to use. If assigned, HandUI will link the placement system to this object.")]
+    public NetworkCardPlacementSystem networkPlacementOverride;
+    
+    [Header("Auto-link Network Placement")]
+    [Tooltip("Automatically link to a spawned NetworkCardPlacementSystem when networking starts.")]
+    public bool autoLinkNetworkPlacement = true;
+    [Tooltip("Seconds between auto-link retries while networking is starting up.")]
+    public float autoLinkRetryInterval = 2f;
+    private float _nextAutoLinkTime = 0f;
+    
     // Placement mode state
     private bool isInPlacementMode = false;
     private Card selectedCard = null;
@@ -56,6 +67,8 @@ public class HandUI : MonoBehaviour
             if (placementSystem == null)
                 Debug.LogWarning("[HandUI] No CardPlacementSystem found in scene. Click-to-place will not work.");
         }
+        // Ensure the placement system is linked to a (preferably spawned) NetworkCardPlacementSystem
+        EnsureNetworkPlacementLinked();
         
         // get main camera reference
         mainCamera = Camera.main;
@@ -113,6 +126,13 @@ public class HandUI : MonoBehaviour
         if (isInPlacementMode)
         {
             HandlePlacementModeInput();
+        }
+
+        // Periodically attempt to auto-link to spawned NetworkCardPlacementSystem once networking is live
+        if (autoLinkNetworkPlacement && Time.time >= _nextAutoLinkTime)
+        {
+            _nextAutoLinkTime = Time.time + Mathf.Max(0.2f, autoLinkRetryInterval);
+            EnsureNetworkPlacementLinked();
         }
     }
 
@@ -351,11 +371,16 @@ public class HandUI : MonoBehaviour
             return;
         }
         
+        // Ensure a CardPlacementSystem exists; if missing, try to create and link one automatically
         if (placementSystem == null)
         {
-            Debug.LogWarning("[HandUI] No CardPlacementSystem found. Falling back to legacy spawn.");
-            OnCardClickedLegacy(slotIndex);
-            return;
+            TryEnsurePlacementSystem();
+            if (placementSystem == null)
+            {
+                Debug.LogWarning("[HandUI] No CardPlacementSystem found or created. Falling back to legacy spawn.");
+                OnCardClickedLegacy(slotIndex);
+                return;
+            }
         }
 
         // Check cost before entering placement mode
@@ -368,6 +393,109 @@ public class HandUI : MonoBehaviour
         
         // Enter placement mode
         EnterPlacementMode(c, slotIndex);
+    }
+
+    /// <summary>
+    /// Attempts to auto-create and link a CardPlacementSystem at runtime so click-to-place works without manual setup.
+    /// </summary>
+    private void TryEnsurePlacementSystem()
+    {
+        // Try to find an existing backend first
+        if (placementSystem == null)
+        {
+            placementSystem = FindFirstObjectByType<CardPlacementSystem>();
+        }
+        if (placementSystem != null)
+        {
+            // Make sure it's linked to the Network backend
+            if (placementSystem.networkPlacement == null)
+            {
+                placementSystem.networkPlacement = networkPlacementOverride ?? (FindSpawnedPlacementSystem() ?? NetworkCardPlacementSystem.Instance ?? FindFirstObjectByType<NetworkCardPlacementSystem>());
+            }
+            return;
+        }
+
+        // Create a new one if not found
+        var cpsGO = new GameObject("CardPlacementSystem");
+        placementSystem = cpsGO.AddComponent<CardPlacementSystem>();
+        // Link to backend
+        placementSystem.networkPlacement = networkPlacementOverride ?? (FindSpawnedPlacementSystem() ?? NetworkCardPlacementSystem.Instance ?? FindFirstObjectByType<NetworkCardPlacementSystem>());
+        if (placementSystem.networkPlacement == null)
+        {
+            Debug.LogWarning("[HandUI] NetworkCardPlacementSystem not found. Placement preview will be limited.");
+        }
+        else
+        {
+            Debug.Log("[HandUI] Auto-created CardPlacementSystem and linked backend: " + placementSystem.networkPlacement.name);
+        }
+        Debug.Log("[HandUI] Auto-created CardPlacementSystem and linked backend.");
+    }
+
+    // Ensure our placement system is linked to a viable NetworkCardPlacementSystem; prefer spawned for RPCs
+    private void EnsureNetworkPlacementLinked()
+    {
+        if (placementSystem == null) return;
+        // If already linked to a spawned NCPS, nothing to do
+        if (placementSystem.networkPlacement != null)
+        {
+            var no = placementSystem.networkPlacement.GetComponent<Unity.Netcode.NetworkObject>();
+            if (no != null && no.IsSpawned)
+            {
+                return;
+            }
+        }
+
+        // If an explicit override is set, prefer that
+        if (networkPlacementOverride != null)
+        {
+            placementSystem.networkPlacement = networkPlacementOverride;
+            // Warn if networking is active and the override is not spawned, as RPCs must originate from spawned objects
+            bool netActive = Unity.Netcode.NetworkManager.Singleton != null && Unity.Netcode.NetworkManager.Singleton.IsListening;
+            var ono = networkPlacementOverride.GetComponent<Unity.Netcode.NetworkObject>();
+            if (netActive && (ono == null || !ono.IsSpawned))
+            {
+                Debug.LogWarning("[HandUI] Using inspector-assigned NetworkCardPlacementSystem that is not a spawned NetworkObject. Preview is fine, but RPCs will be routed via a spawned instance.");
+            }
+            return;
+        }
+
+        var spawned = FindSpawnedPlacementSystem();
+        if (spawned != null)
+        {
+            placementSystem.networkPlacement = spawned;
+            Debug.Log("[HandUI] Linked to spawned NetworkCardPlacementSystem: " + spawned.name);
+            return;
+        }
+
+        // Fallbacks
+        if (placementSystem.networkPlacement == null)
+        {
+            var inst = NetworkCardPlacementSystem.Instance;
+            if (inst != null)
+            {
+                placementSystem.networkPlacement = inst;
+                Debug.Log("[HandUI] Linked to NetworkCardPlacementSystem.Instance: " + inst.name);
+                return;
+            }
+            var any = FindFirstObjectByType<NetworkCardPlacementSystem>();
+            if (any != null)
+            {
+                placementSystem.networkPlacement = any;
+                Debug.Log("[HandUI] Linked to first NetworkCardPlacementSystem found: " + any.name);
+            }
+        }
+    }
+
+    private NetworkCardPlacementSystem FindSpawnedPlacementSystem()
+    {
+        var all = FindObjectsByType<NetworkCardPlacementSystem>(FindObjectsSortMode.None);
+        foreach (var sys in all)
+        {
+            if (sys == null) continue;
+            var no = sys.GetComponent<Unity.Netcode.NetworkObject>();
+            if (no != null && no.IsSpawned) return sys;
+        }
+        return null;
     }
 
     /// <summary>
@@ -449,27 +577,31 @@ public class HandUI : MonoBehaviour
                 return; // Clicked on UI, ignore
             }
             
-            // Compute a world position, then validate via the network-aware system if available (always as Player for local-friendly checks)
+            // Prefer unified wrapper so range indicator and preview stay in sync
             Vector3 worldPos = Vector3.zero;
-            bool canPlace = false;
-            var net = NetworkCardPlacementSystem.Instance;
-            if (net != null)
+            bool isValid = false;
+            bool hasPos = false;
+            if (placementSystem != null)
             {
-                worldPos = net.GetWorldPositionFromScreen(screenPos);
-                if (worldPos != Vector3.zero)
+                hasPos = placementSystem.TryGetValidPlacementPosition(ray, selectedCard, out worldPos, out isValid);
+            }
+            else
+            {
+                // Last resort: use network system directly
+                var net = NetworkCardPlacementSystem.Instance;
+                if (net != null)
                 {
-                    ulong cid = Unity.Netcode.NetworkManager.Singleton != null ? Unity.Netcode.NetworkManager.Singleton.LocalClientId : 0UL;
-                    canPlace = net.IsValidPlacementPosition(worldPos, selectedCard, Unit.Faction.Player, cid);
+                    worldPos = net.GetWorldPositionFromScreen(screenPos);
+                    if (worldPos != Vector3.zero)
+                    {
+                        ulong cid = Unity.Netcode.NetworkManager.Singleton != null ? Unity.Netcode.NetworkManager.Singleton.LocalClientId : 0UL;
+                        isValid = net.IsValidPlacementPosition(worldPos, selectedCard, Unit.Faction.Player, cid);
+                        hasPos = true;
+                    }
                 }
             }
 
-            // Fallback to local placement system if needed
-            if (!canPlace && placementSystem != null)
-            {
-                canPlace = placementSystem.TryGetPlacementPosition(ray, selectedCard, out worldPos);
-            }
-
-            if (canPlace)
+            if (hasPos && isValid)
             {
                 PlaceSelectedCard(worldPos);
             }
@@ -491,23 +623,32 @@ public class HandUI : MonoBehaviour
             Vector2 mousePos = Input.mousePosition;
             Ray ray = mainCamera.ScreenPointToRay(mousePos);
 
-            var net = NetworkCardPlacementSystem.Instance;
-            if (net != null)
-            {
-                Vector3 worldPos = net.GetWorldPositionFromScreen(mousePos);
-                bool isValid = worldPos != Vector3.zero;
-                if (isValid)
-                {
-                    ulong cid = Unity.Netcode.NetworkManager.Singleton != null ? Unity.Netcode.NetworkManager.Singleton.LocalClientId : 0UL;
-                    isValid = net.IsValidPlacementPosition(worldPos, selectedCard, Unit.Faction.Player, cid);
-                }
-                net.ShowPlacementPreview(worldPos, selectedCard, Unit.Faction.Player, isValid);
-            }
-            else if (placementSystem != null)
+            // Always go through placementSystem so both preview indicator and range circle update
+            if (placementSystem != null)
             {
                 Vector3 worldPos;
-                bool isValid = placementSystem.TryGetPlacementPosition(ray, selectedCard, out worldPos);
-                placementSystem.UpdatePlacementPreview(worldPos, isValid);
+                bool isValid = false;
+                bool hasPos = placementSystem.TryGetValidPlacementPosition(ray, selectedCard, out worldPos, out isValid);
+                if (hasPos)
+                {
+                    placementSystem.UpdatePlacementPreview(worldPos, isValid);
+                }
+            }
+            else
+            {
+                // Fallback to network-only preview
+                var net = NetworkCardPlacementSystem.Instance;
+                if (net != null)
+                {
+                    Vector3 worldPos = net.GetWorldPositionFromScreen(mousePos);
+                    bool isValid = worldPos != Vector3.zero;
+                    if (isValid)
+                    {
+                        ulong cid = Unity.Netcode.NetworkManager.Singleton != null ? Unity.Netcode.NetworkManager.Singleton.LocalClientId : 0UL;
+                        isValid = net.IsValidPlacementPosition(worldPos, selectedCard, Unit.Faction.Player, cid);
+                    }
+                    net.ShowPlacementPreview(worldPos, selectedCard, Unit.Faction.Player, isValid);
+                }
             }
         }
     }

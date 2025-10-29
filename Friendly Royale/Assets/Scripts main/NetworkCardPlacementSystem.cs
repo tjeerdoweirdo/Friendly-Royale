@@ -75,6 +75,12 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
     [Tooltip("Color for invalid placement")]
     public Color invalidColor = Color.red;
     
+    [Header("Debug")]
+    [Tooltip("When enabled, logs detailed reasons for placement invalidity on client.")]
+    public bool debugPlacementLogs = false;
+    [Tooltip("If true, do not treat ground as non-placeable even if its layer is included in nonPlaceableLayerMask (only when no explicit valid areas configured).")]
+    public bool allowGroundEvenIfMarkedNonPlaceable = true;
+    
     private static NetworkCardPlacementSystem instance;
     public static NetworkCardPlacementSystem Instance => instance;
     
@@ -100,6 +106,12 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
         {
             playerCamera = FindFirstObjectByType<Camera>();
         }
+
+        // Proactive diagnostics in network scenes: ensure spawners/backbone exist
+        if (IsNetworkReady())
+        {
+            StartCoroutine(LogSceneSpawnReadiness());
+        }
     }
     
     /// <summary>
@@ -116,10 +128,81 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
         // Client-side prediction (less strict)
         return ValidatePositionOnClient(position, card, playerFaction);
     }
+
+    // Emits helpful diagnostics shortly after start to highlight missing scene wiring in networked scenes.
+    private System.Collections.IEnumerator LogSceneSpawnReadiness()
+    {
+        // wait a few frames for scene objects to initialize
+        float t = 0f;
+        while (t < 0.5f)
+        {
+            yield return null;
+            t += Time.unscaledDeltaTime;
+        }
+
+        var spawner = FindFirstObjectByType<CardSpawner>();
+        var nm = NetworkManager.Singleton;
+        int ncpsSpawnedCount = 0;
+        foreach (var sys in FindObjectsByType<NetworkCardPlacementSystem>(FindObjectsSortMode.None))
+        {
+            var no = sys.GetComponent<NetworkObject>();
+            if (no != null && no.IsSpawned) ncpsSpawnedCount++;
+        }
+
+        Debug.Log($"[NCPS][Diag] NetReady={(nm!=null && nm.IsListening)} role={(IsServer?"Server":"Client")} CardSpawner={(spawner?spawner.name:"<none>")} SpawnedNCPS={ncpsSpawnedCount}");
+
+        if (spawner == null)
+        {
+            Debug.LogWarning("[NCPS][Diag] No CardSpawner found in the active scene. In networked scenes, ensure a CardSpawner exists on BOTH host and client scenes. Fallback ClientRpc spawns require it.");
+        }
+    }
     
     private bool ValidatePositionOnServer(Vector3 position, Card card, Unit.Faction playerFaction, ulong clientId)
     {
         // Comprehensive server-side validation
+        // Permissive unified-mode path: if no explicit valid areas are configured, accept ground placements unless clearly invalid.
+        if (useUnifiedPlacementForAllPlayers && (validPlacementAreas == null || validPlacementAreas.Count == 0))
+        {
+            // 1) Reject obviously invalid areas
+            if (IsPositionInInvalidArea(position))
+            {
+                if (debugPlacementLogs) Debug.Log("[NCPS][Server] Invalid: non-placeable area in unified fallback.");
+                return false;
+            }
+
+            // 2) Ground check with overlap guard
+            bool onGround = IsPositionOnGround(position);
+            if (!onGround && allowGroundEvenIfMarkedNonPlaceable)
+            {
+                int nl = nonPlaceableLayerMask.value; int gl = groundLayerMask.value;
+                if ((nl & gl) != 0)
+                {
+                    // Non-placeable mask includes ground; allow as configured
+                    onGround = true;
+                    if (debugPlacementLogs) Debug.Log("[NCPS][Server] Ground overlaps nonPlaceable; allowing due to setting.");
+                }
+            }
+
+            if (!onGround && debugPlacementLogs)
+            {
+                Debug.LogWarning("[NCPS][Server] Ground raycast failed in unified fallback; allowing with caution.");
+            }
+
+            // 3) Proximity constraints
+            if (!CheckDistanceFromTowers(position))
+            {
+                if (debugPlacementLogs) Debug.Log("[NCPS][Server] Invalid: too close to towers.");
+                return false;
+            }
+            if (card.cardType == CardType.Building && !CheckDistanceFromBuildings(position))
+            {
+                if (debugPlacementLogs) Debug.Log("[NCPS][Server] Invalid: too close to other buildings.");
+                return false;
+            }
+
+            // Accept in unified permissive mode
+            return true;
+        }
         
         // 1. Check if position is within allowed placement areas
         if (!IsPositionInValidArea(position, playerFaction))
@@ -163,16 +246,38 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
     private bool ValidatePositionOnClient(Vector3 position, Card card, Unit.Faction playerFaction)
     {
         // Simpler client-side validation for immediate feedback
-        
+        // If unified mode with no explicit valid areas configured, default to permissive client-side preview:
+        // allow unless we are clearly in an invalid area. Server will still do full checks.
+        if (useUnifiedPlacementForAllPlayers && validPlacementAreas.Count == 0)
+        {
+            if (IsPositionInInvalidArea(position))
+            {
+                if (debugPlacementLogs)
+                {
+                    Debug.Log("[NCPS][Client] Invalid: non-placeable area while in permissive unified mode.");
+                }
+                return false;
+            }
+            return true;
+        }
+
         // Basic area check
         if (!IsPositionInValidArea(position, playerFaction))
         {
+            if (debugPlacementLogs)
+            {
+                Debug.Log($"[NCPS][Client] Invalid: not in valid area. unified={useUnifiedPlacementForAllPlayers}, validAreas={validPlacementAreas?.Count ?? 0}, groundMask={groundLayerMask.value}, friendlyMask={friendlyPlacementLayerMask.value}, enemyMask={enemyPlacementLayerMask.value}");
+            }
             return false;
         }
         
         // Check if not in obviously invalid areas
         if (IsPositionInInvalidArea(position))
         {
+            if (debugPlacementLogs)
+            {
+                Debug.Log("[NCPS][Client] Invalid: hit non-placeable or invalid collider under cursor.");
+            }
             return false;
         }
         
@@ -193,10 +298,19 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
             layerMask = (playerFaction == Unit.Faction.Player) ? friendlyPlacementLayerMask : enemyPlacementLayerMask;
         }
 
+        // 1) Layer-mask based allow
         if (layerMask != 0)
         {
-            // Raycast downward to check if we're over a valid layer
             if (Physics.Raycast(position + Vector3.up * 10f, Vector3.down, out RaycastHit hit, 20f, layerMask))
+            {
+                return true;
+            }
+        }
+
+        // 2) In unified mode, allow ground as a valid baseline when no explicit areas are configured
+        if (useUnifiedPlacementForAllPlayers && validPlacementAreas.Count == 0 && groundLayerMask != 0)
+        {
+            if (Physics.Raycast(position + Vector3.up * 10f, Vector3.down, out RaycastHit groundHit, 20f, groundLayerMask))
             {
                 return true;
             }
@@ -211,7 +325,7 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
             }
         }
         
-        // If no specific valid areas are defined, allow placement anywhere (fallback)
+        // 3) Fallback: if nothing defined at all, allow anywhere
         return validPlacementAreas.Count == 0 && layerMask == 0;
     }
     
@@ -222,6 +336,21 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
         {
             if (Physics.Raycast(position + Vector3.up * 10f, Vector3.down, out RaycastHit hit, 20f, nonPlaceableLayerMask))
             {
+                // If ground is also considered non-placeable by mask but we have no explicit valid areas,
+                // optionally allow it to avoid accidentally blocking everything.
+                if (allowGroundEvenIfMarkedNonPlaceable && validPlacementAreas.Count == 0)
+                {
+                    int nl = nonPlaceableLayerMask.value;
+                    int gl = groundLayerMask.value;
+                    if ((nl & gl) != 0)
+                    {
+                        if (debugPlacementLogs)
+                        {
+                            Debug.Log("[NCPS][Client] Warning: Ground layer overlaps with nonPlaceableLayerMask. Allowing ground due to setting.");
+                        }
+                        return false;
+                    }
+                }
                 return true;
             }
         }
@@ -301,6 +430,10 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
         if (indicatorPrefab == null)
         {
             // No prefab assigned, nothing to show
+            if (debugPlacementLogs)
+            {
+                Debug.LogWarning("[NCPS] No valid/invalid placement indicator prefab assigned. Assign prefabs in inspector to see placement markers.");
+            }
             return;
         }
 
@@ -412,10 +545,38 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
         // In multiplayer client, ask the server to validate and broadcast the spawn
         if (NetworkObject == null || !NetworkObject.IsSpawned)
         {
-            Debug.LogError("[NetworkCardPlacementSystem] Cannot send ServerRpc: this component's NetworkObject is not spawned. Ensure it has a NetworkObject and the scene is loaded by NGO.");
+            // Try to find a spawned instance to route the RPC through (e.g., auto-spawned by server)
+            var spawned = FindSpawnedRpcInstance();
+            if (spawned != null)
+            {
+                spawned.RequestCardPlacementServerRpc(position, card.cardID, playerFaction, clientId);
+                Debug.Log($"[NetworkCardPlacementSystem] Routed placement request via spawned instance for {card.cardName} at {position}");
+                return;
+            }
+            else
+            {
+                Debug.LogError("[NetworkCardPlacementSystem] Cannot send ServerRpc: no spawned NetworkCardPlacementSystem found. Ensure the server spawned one and clients received it.");
+                return;
+            }
         }
         RequestCardPlacementServerRpc(position, card.cardID, playerFaction, clientId);
         Debug.Log($"[NetworkCardPlacementSystem] Requested placement: {card.cardName} at {position}");
+    }
+
+    // Finds any NetworkCardPlacementSystem in the scene with a spawned NetworkObject to use for RPCs
+    private NetworkCardPlacementSystem FindSpawnedRpcInstance()
+    {
+        var all = FindObjectsByType<NetworkCardPlacementSystem>(FindObjectsSortMode.None);
+        foreach (var sys in all)
+        {
+            if (sys == null) continue;
+            var no = sys.GetComponent<NetworkObject>();
+            if (no != null && no.IsSpawned)
+            {
+                return sys;
+            }
+        }
+        return null;
     }
     
     /// <summary>
@@ -434,8 +595,9 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
     public bool TryGetPlacementPosition(Ray ray, Card card, out Vector3 worldPosition)
     {
         worldPosition = Vector3.zero;
-        
-        if (card == null || playerCamera == null)
+
+        // Only require a valid card; a Ray was supplied by the caller so we don't depend on an internal camera here
+        if (card == null)
             return false;
         
         // Raycast against ground to get the world position
@@ -618,7 +780,8 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
         CardSpawner spawner = FindFirstObjectByType<CardSpawner>();
         if (spawner == null)
         {
-            Debug.LogError("[NetworkCardPlacementSystem] Cannot spawn card - no CardSpawner found in scene");
+            // CardSpawner might not yet be active on this client (scene load timing). Retry briefly.
+            StartCoroutine(EnsureSpawnerThenSpawn(card, position, serverFaction, placingClientId));
             return;
         }
         
@@ -632,6 +795,33 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
         ShowNetworkPlacementFeedback(spawnPos, card, localFaction, placingClientId);
         
         Debug.Log($"[NetworkCardPlacementSystem] Spawned card {cardID} for client {placingClientId} at {spawnPos}");
+    }
+
+    // Retry locating a CardSpawner on the client for a short time, then spawn.
+    private System.Collections.IEnumerator EnsureSpawnerThenSpawn(Card card, Vector3 position, Unit.Faction serverFaction, ulong placingClientId)
+    {
+        float timeout = 2f;
+        float elapsed = 0f;
+        CardSpawner spawner = null;
+        while (elapsed < timeout && (spawner = FindFirstObjectByType<CardSpawner>()) == null)
+        {
+            yield return null; // wait one frame
+            elapsed += Time.unscaledDeltaTime;
+        }
+
+        if (spawner == null)
+        {
+            Debug.LogError("[NetworkCardPlacementSystem] Cannot spawn card - no CardSpawner found in scene after waiting. Ensure CardSpawner exists on all clients in the battle scene.");
+            yield break;
+        }
+
+        ulong localId = NetworkManager.Singleton != null ? NetworkManager.Singleton.LocalClientId : 0UL;
+        var localFaction = (placingClientId == localId) ? Unit.Faction.Player : Unit.Faction.Enemy;
+        Vector3 spawnPos = MapOpponentPositionIfNeeded(position, placingClientId);
+        yield return spawner.SpawnUnitAtPosition(card, spawnPos, localFaction);
+
+        ShowNetworkPlacementFeedback(spawnPos, card, localFaction, placingClientId);
+        Debug.Log($"[NetworkCardPlacementSystem] Delayed spawn completed for {card.cardName} at {spawnPos}");
     }
     
     /// <summary>

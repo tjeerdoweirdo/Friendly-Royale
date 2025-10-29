@@ -8,6 +8,7 @@ using TMPro;
 using Unity.Netcode;
 using Unity.Services.Authentication;
 using Unity.Services.Core;
+using UnityEngine.EventSystems;
 using Unity.Services.Lobbies;
 using Unity.Services.Lobbies.Models;
 #if UNITY_RELAY_INSTALLED
@@ -203,6 +204,8 @@ public class MatchmakingManager : MonoBehaviour
     private bool localReady = false;
     private bool opponentReady = false;
     private float readyPollInterval = 1.5f;
+    // Track when UI is in ready phase so Cancel button only un-readies instead of leaving lobby
+    private bool inReadyPhase = false;
 
     // Opponent information
     private string opponentUsername = "";
@@ -242,6 +245,7 @@ public class MatchmakingManager : MonoBehaviour
         
         if (cancelMatchButton != null)
         {
+            cancelMatchButton.onClick.RemoveAllListeners();
             cancelMatchButton.onClick.AddListener(CancelMatchmaking);
             cancelMatchButton.gameObject.SetActive(false);
         }
@@ -281,6 +285,7 @@ public class MatchmakingManager : MonoBehaviour
         if (readyPanel != null) readyPanel.SetActive(false);
         if (readyButton != null)
         {
+            readyButton.onClick.RemoveAllListeners();
             readyButton.onClick.AddListener(OnReadyClicked);
             readyButton.interactable = true;
         }
@@ -396,13 +401,38 @@ public class MatchmakingManager : MonoBehaviour
 
     public void CancelMatchmaking()
     {
+        // Guard: if this was (mis)wired to the Ready button, ignore to prevent accidental cancel
+        var es = EventSystem.current;
+        if (es != null && readyButton != null)
+        {
+            var src = es.currentSelectedGameObject;
+            if (src == readyButton.gameObject)
+            {
+                Debug.LogWarning("CancelMatchmaking invoked from Ready button; ignoring.");
+                return;
+            }
+        }
         if (!isSearching) return;
-        
+        // If we're in ready phase, cancel should stop matchmaking completely and inform both sides via lobby leave
+        if (inReadyPhase && currentLobby != null)
+        {
+            DoCancelMatchmaking("Match canceled");
+            return;
+        }
+
+        // Default: cancel active search
+        DoCancelMatchmaking("Matchmaking cancelled");
+    }
+
+    // Centralized cancellation routine so we can use specific messages (e.g., "Match canceled")
+    void DoCancelMatchmaking(string statusMessage)
+    {
         isSearching = false;
         currentState = MatchmakingState.Idle;
         loadingPhase = LoadingPhase.None;
         preMatchStarted = false;
-        
+        inReadyPhase = false;
+
         // Stop matchmaking coroutine
         if (matchmakingCoroutine != null)
         {
@@ -431,29 +461,29 @@ public class MatchmakingManager : MonoBehaviour
             StopCoroutine(queueCountCoroutine);
             queueCountCoroutine = null;
         }
-        
-        // Leave lobby if we're in one
+
+        // Leave lobby if we're in one (this notifies the other player and ends the ready-up)
         if (currentLobby != null)
         {
             LeaveLobby();
         }
-        
+
         // Update UI
         if (findMatchButton != null) findMatchButton.gameObject.SetActive(true);
         if (cancelMatchButton != null) cancelMatchButton.gameObject.SetActive(false);
-        
+
         // Hide opponent info
         HideOpponentInfo();
-    // Reset ready UI/state
-    localReady = false;
-    opponentReady = false;
-    if (readyPanel != null) readyPanel.SetActive(false);
-    if (readyButton != null) readyButton.interactable = true;
-    if (localReadyText != null) localReadyText.text = "You: Not Ready";
-    if (opponentReadyText != null) opponentReadyText.text = "Opponent: Not Ready";
-        
-        SetStatus("Matchmaking cancelled");
-        Debug.Log("Matchmaking cancelled by player");
+        // Reset ready UI/state
+        localReady = false;
+        opponentReady = false;
+        if (readyPanel != null) readyPanel.SetActive(false);
+        if (readyButton != null) readyButton.interactable = true;
+        if (localReadyText != null) localReadyText.text = "You: Not Ready";
+        if (opponentReadyText != null) opponentReadyText.text = "Opponent: Not Ready";
+
+        SetStatus(statusMessage);
+        Debug.Log(statusMessage);
     }
 
     public void StartPracticeMode()
@@ -1919,6 +1949,7 @@ public class MatchmakingManager : MonoBehaviour
     // --- Ready-up phase ---
     void StartReadyPhase()
     {
+        inReadyPhase = true;
         // Reset states/UI
         localReady = false;
         opponentReady = false;
@@ -1940,10 +1971,18 @@ public class MatchmakingManager : MonoBehaviour
 
     void OnReadyClicked()
     {
-        if (localReady) return;
-        if (readyButton != null) readyButton.interactable = false;
-        SetStatus("You are Ready. Waiting for opponent...");
-        StartCoroutine(UpdatePlayerReadyAsync(true));
+        // Toggle ready/unready unless pre-match already started
+        if (preMatchStarted) return;
+        bool target = !localReady;
+        if (target)
+        {
+            SetStatus("You are Ready. Waiting for opponent...");
+        }
+        else
+        {
+            SetStatus("You are Not Ready. Waiting for opponent...");
+        }
+        StartCoroutine(UpdatePlayerReadyAsync(target));
     }
 
     IEnumerator UpdatePlayerReadyAsync(bool ready)
@@ -1979,6 +2018,12 @@ public class MatchmakingManager : MonoBehaviour
             if (resp.Exception == null && resp.Result != null)
             {
                 currentLobby = resp.Result;
+                // If opponent left during ready-up, stop matchmaking completely and show message
+                if (inReadyPhase && (currentLobby.Players == null || currentLobby.Players.Count < 2))
+                {
+                    DoCancelMatchmaking("Match canceled");
+                    yield break;
+                }
                 string myId = string.Empty;
                 try { myId = AuthenticationService.Instance.PlayerId; } catch { }
                 bool localR = localReady;
@@ -2019,6 +2064,8 @@ public class MatchmakingManager : MonoBehaviour
             {
                 StartCoroutine(PreMatchCountdown());
             }
+            // Ready phase is over once countdown begins
+            inReadyPhase = false;
         }
     }
 
@@ -2026,7 +2073,8 @@ public class MatchmakingManager : MonoBehaviour
     {
         if (localReadyText != null) localReadyText.text = localReady ? "You: Ready" : "You: Not Ready";
         if (opponentReadyText != null) opponentReadyText.text = opponentReady ? "Opponent: Ready" : "Opponent: Not Ready";
-        if (readyButton != null) readyButton.interactable = !localReady;
+        // Keep button interactable to allow toggling ready on/off during ready phase
+        if (readyButton != null) readyButton.interactable = true;
     }
 
     public void ShowMatchmakingPanel()
