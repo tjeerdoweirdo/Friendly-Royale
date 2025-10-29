@@ -14,8 +14,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   arenaID: Tutorial
   displayName: Tutorial
-  preview: {fileID: 0}
+  preview: {fileID: 21300000, guid: 178097116c99ba140bbf302b7a0bb4b0, type: 3}
   trophyRequirement: 0
   sceneName: TutorialArena
   rewardTrophiesOnWin: 10
   rewardGoldOnWin: 50
+  botKingLevel: 1

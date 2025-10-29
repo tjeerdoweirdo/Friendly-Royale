@@ -19,3 +19,4 @@ MonoBehaviour:
   sceneName: Forest
   rewardTrophiesOnWin: 10
   rewardGoldOnWin: 50
+  botKingLevel: 5

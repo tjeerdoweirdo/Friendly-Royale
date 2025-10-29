@@ -87,41 +87,8 @@ public class KingTower : Tower
         }
 
         // Compute max health from level before base.Start() initializes currentHealth/health bar
-        int level = 1;
-        if (isPlayerKing)
-        {
-            if (PlayerProgress.Instance != null)
-            {
-                level = PlayerProgress.Instance.GetKingTowerLevel();
-            }
-        }
-        else
-        {
-            // Enemy King uses opponent level from matchmaking if available; otherwise optional override
-            if (s_OpponentKingLevel.HasValue)
-            {
-                level = s_OpponentKingLevel.Value;
-            }
-            else if (enemyLevelOverride > 0)
-            {
-                level = enemyLevelOverride;
-            }
-            else if (PlayerProgress.Instance != null)
-            {
-                // Fallback: mirror player's level if nothing else provided
-                level = PlayerProgress.Instance.GetKingTowerLevel();
-            }
-        }
-        int computedMax = baseMaxHealth + (Mathf.Max(1, level) - 1) * Mathf.Max(0, healthPerLevel);
-        if (levelHealthOverrides != null && levelHealthOverrides.Length >= level && level > 0)
-        {
-            int idx = level - 1; // convert 1-based level to 0-based index
-            if (idx >= 0 && idx < levelHealthOverrides.Length && levelHealthOverrides[idx] > 0)
-            {
-                computedMax = levelHealthOverrides[idx];
-            }
-        }
-        maxHealth = Mathf.Max(1, computedMax);
+        int level = ComputeDesiredLevel();
+        maxHealth = Mathf.Max(1, ComputeMaxHealthForLevel(level));
         base.Start();
         Debug.Log($"[KingTower] Start -> {towerName}: kingTowerType={kingTowerType}, ownerTag={ownerTag}, faction={faction}, level={level}, maxHealth={maxHealth}");
 
@@ -131,6 +98,126 @@ public class KingTower : Tower
             Debug.Log($"[KingTower] Applying buffered damage {bufferedPreInitDamage} after initialization.");
             base.TakeDamage(bufferedPreInitDamage);
             bufferedPreInitDamage = 0;
+        }
+    }
+
+    // Computes the level this tower should use based on role and any known opponent level.
+    public int ComputeDesiredLevel()
+    {
+        // Practice/offline: Player king uses average deck level; Enemy king can use arena.botKingLevel when configured
+        if (GameModeManager.Instance != null && GameModeManager.Instance.IsOfflineMode())
+        {
+            if (isPlayerKing)
+            {
+                return Mathf.Max(1, ComputeAverageDeckLevel());
+            }
+            else
+            {
+                int arenaBot = GetArenaBotKingLevel();
+                if (arenaBot > 0) return Mathf.Max(1, arenaBot);
+                return Mathf.Max(1, ComputeAverageDeckLevel());
+            }
+        }
+
+        // Online/default: Player king defaults to level 1 (do not mirror local progress)
+        if (isPlayerKing)
+        {
+            return 1;
+        }
+
+        // Enemy king (online): use opponent level if known; else optional override; else default 1
+        if (s_OpponentKingLevel.HasValue)
+        {
+            return Mathf.Max(1, s_OpponentKingLevel.Value);
+        }
+        if (enemyLevelOverride > 0)
+        {
+            return Mathf.Max(1, enemyLevelOverride);
+        }
+        return 1;
+    }
+
+    // Computes the average level of cards in the current deck for the selected arena; falls back to 1
+    private int ComputeAverageDeckLevel()
+    {
+        try
+        {
+            var dm = DeckManager.Instance;
+            var pp = PlayerProgress.Instance;
+            if (dm == null || pp == null) return 1;
+            string arenaID = dm.selectedArena != null ? dm.selectedArena.arenaID : (dm.selectedArenaID ?? "default");
+            var cards = dm.selectedCards != null && dm.selectedCards.Count > 0 ? dm.selectedCards : dm.deck;
+            if (cards == null || cards.Count == 0) return 1;
+            int sum = 0; int count = 0;
+            foreach (var c in cards)
+            {
+                if (c == null || string.IsNullOrEmpty(c.cardID)) continue;
+                int lvl = pp.GetCardLevel(c.cardID, arenaID);
+                sum += Mathf.Max(1, lvl);
+                count++;
+            }
+            if (count == 0) return 1;
+            return Mathf.Max(1, Mathf.RoundToInt(sum / (float)count));
+        }
+        catch { return 1; }
+    }
+
+    private int GetArenaBotKingLevel()
+    {
+        try
+        {
+            var dm = DeckManager.Instance;
+            var arena = dm != null ? dm.selectedArena : null;
+            if (arena != null && arena.botKingLevel > 0) return arena.botKingLevel;
+        }
+        catch { }
+        return 0;
+    }
+
+    // Compute max health stat for a given level using base/step or overrides.
+    public int ComputeMaxHealthForLevel(int level)
+    {
+        int computedMax = baseMaxHealth + (Mathf.Max(1, level) - 1) * Mathf.Max(0, healthPerLevel);
+        if (levelHealthOverrides != null && level > 0 && level <= levelHealthOverrides.Length)
+        {
+            int idx = level - 1;
+            if (idx >= 0 && idx < levelHealthOverrides.Length && levelHealthOverrides[idx] > 0)
+            {
+                computedMax = levelHealthOverrides[idx];
+            }
+        }
+        return Mathf.Max(1, computedMax);
+    }
+
+    // Public API to apply a level post-initialization and update health appropriately.
+    public void ApplyLevel(int level, bool keepCurrentHealthPercent = true)
+    {
+        level = Mathf.Max(1, level);
+        int newMax = ComputeMaxHealthForLevel(level);
+        if (keepCurrentHealthPercent && maxHealth > 0)
+        {
+            float pct = Mathf.Clamp01(currentHealth / (float)maxHealth);
+            maxHealth = newMax;
+            currentHealth = Mathf.RoundToInt(pct * maxHealth);
+        }
+        else
+        {
+            maxHealth = newMax;
+            currentHealth = maxHealth;
+        }
+
+        Debug.Log($"[KingTower] {towerName} ApplyLevel -> level={level} maxHealth={maxHealth} current={currentHealth}");
+    }
+
+    // Convenience: Recompute both kings in the current scene using known PlayerProgress and s_OpponentKingLevel.
+    public static void RecomputeAllKingsFromKnownLevels()
+    {
+        var kings = FindObjectsByType<KingTower>(FindObjectsSortMode.None);
+        foreach (var kt in kings)
+        {
+            if (kt == null) continue;
+            int level = kt.ComputeDesiredLevel();
+            kt.ApplyLevel(level, keepCurrentHealthPercent: false);
         }
     }
 

@@ -19,3 +19,4 @@ MonoBehaviour:
   sceneName: Dessert
   rewardTrophiesOnWin: 10
   rewardGoldOnWin: 50
+  botKingLevel: 8

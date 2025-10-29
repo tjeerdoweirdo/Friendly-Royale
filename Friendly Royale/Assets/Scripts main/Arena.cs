@@ -10,4 +10,8 @@ public class Arena : ScriptableObject
     public string sceneName; // scene to load for battles in this arena
     public int rewardTrophiesOnWin = 10;
     public int rewardGoldOnWin = 50;
+
+    [Header("Bot Settings")]
+    [Tooltip("King Tower level the AI bot should use in practice/offline matches. If <= 0, fallback to average deck level.")]
+    public int botKingLevel = 1;
 }

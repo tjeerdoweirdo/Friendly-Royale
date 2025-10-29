@@ -88,6 +88,12 @@ public class MatchmakingManager : MonoBehaviour
     [Tooltip("Image showing local player's avatar/profile picture")]
     public Image localPlayerAvatarImage;
 
+    [Header("Arena UI")]
+    [Tooltip("Image to display the selected arena's preview sprite in the matchmaking panel")] 
+    public Image arenaPreviewImage;
+    [Tooltip("Optional fallback sprite if the selected arena has no preview")] 
+    public Sprite defaultArenaPreview;
+
     [Header("Opponent Info UI")]
     [Tooltip("Text showing opponent's username when found")]
     public TMP_Text opponentUsernameText;
@@ -289,9 +295,9 @@ public class MatchmakingManager : MonoBehaviour
             readyButton.onClick.AddListener(OnReadyClicked);
             readyButton.interactable = true;
         }
-        if (localReadyText != null) localReadyText.text = "You: Not Ready";
-        if (opponentReadyText != null) opponentReadyText.text = "Opponent: Not Ready";
-        if (readyHintText != null) readyHintText.text = "Press Ready when set";
+    if (localReadyText != null) localReadyText.text = "You: Not";
+    if (opponentReadyText != null) opponentReadyText.text = "Opp: Not";
+    if (readyHintText != null) readyHintText.text = "Tap Ready";
         // Initial queue count
         StartCoroutine(RefreshArenaQueueCount());
         
@@ -388,7 +394,7 @@ public class MatchmakingManager : MonoBehaviour
             matchmakingCoroutine = StartCoroutine(SimulateMatchmaking());
         }
         
-        SetStatus("Searching for opponent...");
+    SetStatus("Searching...");
         Debug.Log("Started matchmaking for arena: " + selectedArena.arenaID);
         // Start periodic queue count refresh while searching
         if (queueCountCoroutine != null)
@@ -416,12 +422,12 @@ public class MatchmakingManager : MonoBehaviour
         // If we're in ready phase, cancel should stop matchmaking completely and inform both sides via lobby leave
         if (inReadyPhase && currentLobby != null)
         {
-            DoCancelMatchmaking("Match canceled");
+            DoCancelMatchmaking("Canceled");
             return;
         }
 
         // Default: cancel active search
-        DoCancelMatchmaking("Matchmaking cancelled");
+    DoCancelMatchmaking("Canceled");
     }
 
     // Centralized cancellation routine so we can use specific messages (e.g., "Match canceled")
@@ -479,8 +485,8 @@ public class MatchmakingManager : MonoBehaviour
         opponentReady = false;
         if (readyPanel != null) readyPanel.SetActive(false);
         if (readyButton != null) readyButton.interactable = true;
-        if (localReadyText != null) localReadyText.text = "You: Not Ready";
-        if (opponentReadyText != null) opponentReadyText.text = "Opponent: Not Ready";
+    if (localReadyText != null) localReadyText.text = "You: Not";
+    if (opponentReadyText != null) opponentReadyText.text = "Opp: Not";
 
         SetStatus(statusMessage);
         Debug.Log(statusMessage);
@@ -501,7 +507,7 @@ public class MatchmakingManager : MonoBehaviour
         }
         
         // Set up single player mode
-        SetStatus("Starting practice match...");
+    SetStatus("Practice...");
         
         // Save current deck
         if (deckManager != null && currentDeck != null)
@@ -529,17 +535,32 @@ public class MatchmakingManager : MonoBehaviour
     {
         // Use existing UI instead of a separate overlay panel
         ShowMatchmakingPanel();
-        if (matchmakingProgress != null) matchmakingProgress.value = 0f;
-        if (statusText != null) statusText.text = "Preparing Practice Match...";
-        if (estimatedTimeText != null) estimatedTimeText.text = "Starting soon";
+    if (matchmakingProgress != null) matchmakingProgress.value = 0f;
+    if (statusText != null) statusText.text = "Preparing...";
+    if (estimatedTimeText != null) estimatedTimeText.text = "Starting...";
         isPracticeStarting = true;
         practiceStartTime = Time.time;
         StartCoroutine(PracticeLoadCountdown());
+
+        // Stop network stack for local practice (no Netcode/Relay running), but keep NetworkManager object active for later online sessions
+        try
+        {
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                NetworkManager.Singleton.Shutdown();
+            }
+        }
+        catch { }
 
         // Hide opponent / player2 UI during practice start
         HideOpponentInfo();
         if (player2Label != null) player2Label.text = ""; // clear player2 text
         if (player1Label != null) player1Label.text = "Player 1 (You)";
+    // Ensure ready UI is hidden/cleared for practice overlay
+    if (readyPanel != null) readyPanel.SetActive(false);
+    if (localReadyText != null) localReadyText.text = "";
+    if (opponentReadyText != null) opponentReadyText.text = "";
+    if (readyHintText != null) readyHintText.text = "";
     }
 
     IEnumerator PracticeLoadCountdown()
@@ -550,8 +571,8 @@ public class MatchmakingManager : MonoBehaviour
             float norm = Mathf.Clamp01(elapsed / Mathf.Max(0.01f, practicePreLoadDuration));
             if (matchmakingProgress != null) matchmakingProgress.value = norm;
             float remaining = Mathf.Max(0f, practicePreLoadDuration - elapsed);
-            if (estimatedTimeText != null) estimatedTimeText.text = $"Loading Practice... {Mathf.CeilToInt(remaining)}s";
-            if (statusText != null) statusText.text = "Preparing Practice Match...";
+            if (estimatedTimeText != null) estimatedTimeText.text = $"Loading... {Mathf.CeilToInt(remaining)}s";
+            if (statusText != null) statusText.text = "Preparing...";
             if (elapsed >= practicePreLoadDuration)
             {
                 isPracticeStarting = false;
@@ -635,11 +656,11 @@ public class MatchmakingManager : MonoBehaviour
         {
             if ((Time.time - searchStartTimeForProgress) > searchTimeBeforeExpansion)
             {
-                SetStatus("Expanding search range...");
+                SetStatus("Widening...");
             }
             else
             {
-                SetStatus("Searching for opponent...");
+                SetStatus("Searching...");
             }
             // Random chance to find opponent after minimum half of simulated time
             if ((Time.time - searchStartTimeForProgress) > simulatedMatchmakingTime * 0.5f && Random.value < 0.15f)
@@ -670,7 +691,7 @@ public class MatchmakingManager : MonoBehaviour
         PlayerPrefs.SetString("OpponentUsername", opponentUsername);
         PlayerPrefs.Save();
         
-        SetStatus("Joining match...");
+    SetStatus("Joining...");
 
         // Load the arena scene in a network-aware way
         LoadArenaSceneNetworkAware();
@@ -945,7 +966,7 @@ public class MatchmakingManager : MonoBehaviour
                         ExtractOpponentFromLobby();
                         ShowOpponentFound();
                         
-                        SetStatus("Opponent found! Starting match...");
+                        SetStatus("Opponent found!");
                         break;
                     }
                     else
@@ -1460,7 +1481,7 @@ public class MatchmakingManager : MonoBehaviour
             localPlayerIsPlayer1 = iAmHost; // Host gets Player1, Client gets Player2
             string playerSide = localPlayerIsPlayer1 ? "Player 1" : "Player 2";
             Debug.Log($"Assigned (deterministic): Local player is {playerSide} (Host={iAmHost})");
-            SetStatus($"Assigned as {playerSide}! Match starting...");
+            SetStatus($"Assigned {playerSide}. Starting...");
             if (playerSideToggle != null)
             {
                 playerSideToggle.SetIsOnWithoutNotify(localPlayerIsPlayer1 == localIsPlayer1WhenToggleOn);
@@ -1471,7 +1492,7 @@ public class MatchmakingManager : MonoBehaviour
         UpdatePlayerSideLabels();
         
         // Update status with opponent info
-        SetStatus($"Opponent found: {opponentUsername} ({opponentTrophies} trophies)");
+    SetStatus($"Found: {opponentUsername} ({opponentTrophies})");
 
         // Start the ready-up phase (both players must press Ready)
         StartReadyPhase();
@@ -1650,7 +1671,19 @@ public class MatchmakingManager : MonoBehaviour
         
         if (localPlayerDeckSizeText != null)
         {
-            localPlayerDeckSizeText.text = $"Deck: {localPlayerDeckSize} cards";
+            // Show King Tower level instead of deck size
+            int localKingLevel = 1;
+            bool isOfflineMode = GameModeManager.Instance != null && GameModeManager.Instance.IsOfflineMode();
+            if (isOfflineMode)
+            {
+                localKingLevel = ComputeAverageDeckLevelForSelectedDeck();
+            }
+            else
+            {
+                // Online default shown in lobby
+                localKingLevel = 1;
+            }
+            localPlayerDeckSizeText.text = $"King Lv: {localKingLevel}";
         }
         
         // Update player side based on toggle (only for practice mode)
@@ -1740,6 +1773,25 @@ public class MatchmakingManager : MonoBehaviour
             }
         }
         
+        // Update arena preview sprite
+        if (arenaPreviewImage != null)
+        {
+            if (selectedArena != null && selectedArena.preview != null)
+            {
+                arenaPreviewImage.sprite = selectedArena.preview;
+                arenaPreviewImage.enabled = true;
+            }
+            else if (defaultArenaPreview != null)
+            {
+                arenaPreviewImage.sprite = defaultArenaPreview;
+                arenaPreviewImage.enabled = true;
+            }
+            else
+            {
+                arenaPreviewImage.enabled = false;
+            }
+        }
+        
         // Update button states based on deck completeness and game mode
         bool isDeckValid = ValidateDeckSilently();
         bool isOnlineMode = GameModeManager.Instance == null || GameModeManager.Instance.IsOnlineMode();
@@ -1766,6 +1818,33 @@ public class MatchmakingManager : MonoBehaviour
             // Practice mode is always available when deck is valid
             practiceButton.interactable = isDeckValid && !isSearching;
         }
+
+        // Display opponent's King Tower level (reusing opponentDeckSizeText field)
+        if (opponentDeckSizeText != null)
+        {
+            int oppLevel = 1;
+            bool isOffline = GameModeManager.Instance != null && GameModeManager.Instance.IsOfflineMode();
+            if (isOffline)
+            {
+                // Prefer arena-configured bot level if available, else average deck level
+                var dm = deckManager != null ? deckManager : FindFirstObjectByType<DeckManager>();
+                var arena = dm != null ? dm.selectedArena : null;
+                if (arena != null && arena.botKingLevel > 0)
+                {
+                    oppLevel = Mathf.Max(1, arena.botKingLevel);
+                }
+                else
+                {
+                    oppLevel = ComputeAverageDeckLevelForSelectedDeck();
+                }
+                opponentDeckSizeText.text = $"AI King Lv: {oppLevel}";
+            }
+            else
+            {
+                oppLevel = 1;
+                opponentDeckSizeText.text = $"King Lv: {oppLevel}";
+            }
+        }
     }
 
     bool ValidateDeckSilently()
@@ -1774,6 +1853,31 @@ public class MatchmakingManager : MonoBehaviour
         
         var deck = deckManager.selectedCards.Where(c => c != null).ToList();
         return deck.Count >= minimumDeckSize && deck.Count <= maximumDeckSize;
+    }
+
+    // Compute average deck level for the selected arena; returns 1 if unavailable
+    private int ComputeAverageDeckLevelForSelectedDeck()
+    {
+        try
+        {
+            if (deckManager == null || playerProgress == null) return 1;
+            var cards = deckManager.selectedCards != null && deckManager.selectedCards.Count > 0
+                ? deckManager.selectedCards
+                : deckManager.deck;
+            if (cards == null || cards.Count == 0) return 1;
+            string arenaID = deckManager.selectedArena != null ? deckManager.selectedArena.arenaID : (deckManager.selectedArenaID ?? "default");
+            int sum = 0; int count = 0;
+            foreach (var c in cards)
+            {
+                if (c == null || string.IsNullOrEmpty(c.cardID)) continue;
+                int lvl = playerProgress.GetCardLevel(c.cardID, arenaID);
+                sum += Mathf.Max(1, lvl);
+                count++;
+            }
+            if (count == 0) return 1;
+            return Mathf.Max(1, Mathf.RoundToInt(sum / (float)count));
+        }
+        catch { return 1; }
     }
     
     void InitializeArenaDropdown()
@@ -1919,7 +2023,7 @@ public class MatchmakingManager : MonoBehaviour
             if (showPreMatchCountdownInStatus)
             {
                 float remaining = Mathf.Max(0f, preMatchLoadDuration - (Time.time - preMatchStartTime));
-                SetStatus($"Preparing match... {Mathf.CeilToInt(remaining)}s");
+                SetStatus($"Preparing... {Mathf.CeilToInt(remaining)}s");
             }
             yield return null;
         }
@@ -1953,12 +2057,12 @@ public class MatchmakingManager : MonoBehaviour
         // Reset states/UI
         localReady = false;
         opponentReady = false;
-        if (readyPanel != null) readyPanel.SetActive(true);
-        if (readyButton != null) readyButton.interactable = true;
-        if (localReadyText != null) localReadyText.text = "You: Not Ready";
-        if (opponentReadyText != null) opponentReadyText.text = "Opponent: Not Ready";
-        if (readyHintText != null) readyHintText.text = "Both players must press Ready";
-        SetStatus($"Opponent found: {opponentUsername}. Waiting for Ready...");
+    if (readyPanel != null) readyPanel.SetActive(true);
+    if (readyButton != null) readyButton.interactable = true;
+    if (localReadyText != null) localReadyText.text = "You: Not";
+    if (opponentReadyText != null) opponentReadyText.text = "Opp: Not";
+    if (readyHintText != null) readyHintText.text = "Tap Ready";
+    SetStatus("Waiting for Ready...");
 
         // Start polling lobby for ready flags
         if (readyPollCoroutine != null)
@@ -1976,11 +2080,11 @@ public class MatchmakingManager : MonoBehaviour
         bool target = !localReady;
         if (target)
         {
-            SetStatus("You are Ready. Waiting for opponent...");
+            SetStatus("Ready. Waiting...");
         }
         else
         {
-            SetStatus("You are Not Ready. Waiting for opponent...");
+            SetStatus("Not Ready. Waiting...");
         }
         StartCoroutine(UpdatePlayerReadyAsync(target));
     }
@@ -2071,8 +2175,8 @@ public class MatchmakingManager : MonoBehaviour
 
     void UpdateReadyUI()
     {
-        if (localReadyText != null) localReadyText.text = localReady ? "You: Ready" : "You: Not Ready";
-        if (opponentReadyText != null) opponentReadyText.text = opponentReady ? "Opponent: Ready" : "Opponent: Not Ready";
+        if (localReadyText != null) localReadyText.text = localReady ? "You: Ready" : "You: Not";
+        if (opponentReadyText != null) opponentReadyText.text = opponentReady ? "Opp: Ready" : "Opp: Not";
         // Keep button interactable to allow toggling ready on/off during ready phase
         if (readyButton != null) readyButton.interactable = true;
     }

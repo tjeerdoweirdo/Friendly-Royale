@@ -116,6 +116,18 @@ public class EnemyBot : MonoBehaviour
             return;
         }
 
+        // If an arena is active via DeckManager, adopt its configured botKingLevel as this bot's level
+        try
+        {
+            var dm = DeckManager.Instance;
+            var arena = dm != null ? dm.selectedArena : null;
+            if (arena != null && arena.botKingLevel > 0)
+            {
+                enemyLevel = Mathf.Clamp(arena.botKingLevel, 1, maxEnemyLevel);
+            }
+        }
+        catch { }
+
         if (spawner == null) spawner = FindFirstObjectByType<CardSpawner>();
 
         // try to auto-assign manager if field left empty
@@ -474,11 +486,11 @@ public class EnemyBot : MonoBehaviour
 
         // Find a valid ground position for enemy placement
         int cardLevel = cardLevels.ContainsKey(c) ? cardLevels[c] : enemyLevel;
-        Vector3 spawnPosition = GetValidEnemyPlacementPosition();
         if (spawner != null)
         {
-            // Use the position-based spawning method
-            spawner.SpawnOnSideImmediate(UnityEngine.Random.value < 0.5f, c, Unit.Faction.Enemy, cardLevel, spawnPosition);
+            // Use original CardSpawner lane spawn points (no explicit world position)
+            bool leftSide = UnityEngine.Random.value < 0.5f;
+            spawner.SpawnOnSideImmediate(leftSide, c, Unit.Faction.Enemy, cardLevel);
         }
         else
         {
@@ -498,21 +510,7 @@ public class EnemyBot : MonoBehaviour
         // Debug.Log($"{name} played {c.cardName} (cost {c.coinCost}, level {cardLevel}). Remaining coins: {currentCoins}. Cooldown: {cd}s");
     }
 
-    // Finds a valid ground position for enemy placement using the selected layer
-    private Vector3 GetValidEnemyPlacementPosition()
-    {
-        // Try to find a random point on the ground layer
-        for (int i = 0; i < 10; i++)
-        {
-            Vector3 randomPos = new Vector3(UnityEngine.Random.Range(-10f, 10f), 10f, UnityEngine.Random.Range(-10f, 10f));
-            if (Physics.Raycast(randomPos, Vector3.down, out RaycastHit hit, 20f, this.enemyGroundLayerMask))
-            {
-                return hit.point;
-            }
-        }
-        // Fallback to center
-        return Vector3.zero;
-    }
+    // Note: Using CardSpawner's built-in lane spawn points; no random ground placement needed here.
     #endregion
 
     #region Public API
