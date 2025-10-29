@@ -30,6 +30,16 @@ public class NetworkHUDDev : MonoBehaviour
         {
             _visible = !_visible;
         }
+
+        // Quick shutdown hotkey even if window hidden
+        if (Input.GetKeyDown(KeyCode.F9))
+        {
+            var nm = NetworkManager.Singleton;
+            if (nm != null && nm.IsListening)
+            {
+                nm.Shutdown();
+            }
+        }
     }
 
     void OnGUI()

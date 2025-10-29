@@ -182,6 +182,13 @@ public class MatchmakingManager : MonoBehaviour
     private bool isPracticeStarting = false;
     private float practiceStartTime;
     
+    // Debug: allow forcing a match during online search
+    private bool debugForceImmediateMatch = false;
+
+    [Header("Debug")]
+    [Tooltip("In development builds/editor, prefer hosting when searching (skip joining existing lobbies).")]
+    public bool forceHostWhenDebugging = true;
+    
     // Relay join code published by host in lobby data
     private string relayJoinCode = string.Empty;
     
@@ -311,6 +318,15 @@ public class MatchmakingManager : MonoBehaviour
         {
             UpdateMatchmakingProgress();
         }
+        // Debug hotkey: while searching online, press P to force a match immediately (testing only)
+        try
+        {
+            if (isSearching && (useRealMultiplayer || (GameModeManager.Instance != null && GameModeManager.Instance.IsOnlineMode())) && Input.GetKeyDown(KeyCode.P))
+            {
+                ForceDebugFindMatch();
+            }
+        }
+        catch { }
         // Practice passive progress (safety in case coroutine paused) using main bar
         if (isPracticeStarting && matchmakingProgress != null)
         {
@@ -689,6 +705,8 @@ public class MatchmakingManager : MonoBehaviour
         PlayerPrefs.SetInt("LocalPlayerIsPlayer1", localPlayerIsPlayer1 ? 1 : 0);
         PlayerPrefs.SetString("LocalPlayerUsername", localPlayerUsername);
         PlayerPrefs.SetString("OpponentUsername", opponentUsername);
+        // Signal battle scene auto-manager to start networking based on saved side
+        PlayerPrefs.SetInt("AutoNetworkStart", 1);
         PlayerPrefs.Save();
         
     SetStatus("Joining...");
@@ -707,6 +725,13 @@ public class MatchmakingManager : MonoBehaviour
             return;
         }
 
+        // In debug-forced matches, always load locally (bypass netcode sync)
+        if (debugForceImmediateMatch)
+        {
+            SceneManager.LoadScene(selectedArena.sceneName);
+            return;
+        }
+
         if (useRealMultiplayer && NetworkManager.Singleton != null)
         {
             if (NetworkManager.Singleton.IsServer)
@@ -719,6 +744,59 @@ public class MatchmakingManager : MonoBehaviour
         {
             // Offline or simulation: load locally
             SceneManager.LoadScene(selectedArena.sceneName);
+        }
+    }
+
+    // Testing helper: force a match immediately when searching online
+    private void ForceDebugFindMatch()
+    {
+        // Stop any ongoing lobby polling/creation but keep UI state
+        if (matchmakingCoroutine != null)
+        {
+            StopCoroutine(matchmakingCoroutine);
+            matchmakingCoroutine = null;
+        }
+        if (pollLobbyCoroutine != null)
+        {
+            StopCoroutine(pollLobbyCoroutine);
+            pollLobbyCoroutine = null;
+        }
+        if (lobbyHeartbeatCoroutine != null)
+        {
+            StopCoroutine(lobbyHeartbeatCoroutine);
+            lobbyHeartbeatCoroutine = null;
+        }
+
+        debugForceImmediateMatch = true;
+        // For debug matches, make local player Player 1 (Host) and persist immediately so battle scene auto-starts as Host
+        localPlayerIsPlayer1 = true;
+        try
+        {
+            PlayerPrefs.SetInt("LocalPlayerIsPlayer1", 1);
+            if (!string.IsNullOrEmpty(localPlayerUsername)) PlayerPrefs.SetString("LocalPlayerUsername", localPlayerUsername);
+            string oppName = string.IsNullOrEmpty(opponentUsername) ? "DebugOpponent" : opponentUsername;
+            PlayerPrefs.SetString("OpponentUsername", oppName);
+            PlayerPrefs.SetInt("AutoNetworkStart", 1);
+            PlayerPrefs.Save();
+        }
+        catch { }
+        currentState = MatchmakingState.FoundMatch;
+        matchFound = true;
+        loadingPhase = LoadingPhase.PreMatch;
+        if (matchmakingProgress != null) matchmakingProgress.value = 1f;
+        // Provide a simple fake opponent for UI
+        opponentUsername = string.IsNullOrEmpty(opponentUsername) ? "DebugOpponent" : opponentUsername;
+        opponentTrophies = opponentTrophies == 0 ? (playerProgress?.GetCurrentTrophies() ?? 0) : opponentTrophies;
+        opponentDeckSize = opponentDeckSize == 0 ? Mathf.Clamp(currentDeck != null ? currentDeck.Count : 8, 4, 8) : opponentDeckSize;
+
+        // Hide ready-up and jump straight to countdown
+        inReadyPhase = false;
+        if (readyPanel != null) readyPanel.SetActive(false);
+        SetStatus("Debug: Match forced (P)");
+
+        if (!preMatchStarted)
+        {
+            StartCoroutine(PreMatchCountdown());
         }
     }
 
@@ -764,107 +842,113 @@ public class MatchmakingManager : MonoBehaviour
         
         int playerTrophies = playerProgress?.trophies ?? 0;
         
-        // Try to find existing lobbies first
-        var queryOptions = new QueryLobbiesOptions
+        // Optionally skip joining existing lobbies in development to ensure we host for debugging
+        bool skipJoinForDebug = forceHostWhenDebugging && Debug.isDebugBuild;
+        bool rateLimited = false;
+        if (!skipJoinForDebug)
         {
-            Count = 10,
-            Filters = new List<QueryFilter>
+            // Try to find existing lobbies first
+            var queryOptions = new QueryLobbiesOptions
             {
-                new QueryFilter(QueryFilter.FieldOptions.AvailableSlots, "1", QueryFilter.OpOptions.GE)
-            }
-        };
-        
-        var response = LobbyService.Instance.QueryLobbiesAsync(queryOptions);
-        yield return new WaitUntil(() => response.IsCompleted);
-        bool rateLimited = response.Exception != null &&
-                           (response.Exception.Message != null &&
-                            (response.Exception.Message.Contains("Too Many Requests") || response.Exception.Message.Contains("429")));
-
-        if (response.Exception == null)
-        {
-            // Filter to lobbies for the selected arena and with available slots
-            var all = response.Result.Results;
-            var sameArena = all.Where(l => l != null && l.Data != null && l.Data.ContainsKey("arena") && l.Data["arena"].Value == selectedArena.arenaID).ToList();
-
-            // Update queue count for this arena (sum players in open lobbies)
-            int queueCount = 0;
-            foreach (var l in sameArena)
-            {
-                // Consider only lobbies with at least one open slot to represent "queueing"
-                try
+                Count = 10,
+                Filters = new List<QueryFilter>
                 {
-                    if ((l.MaxPlayers - (l.Players?.Count ?? 0)) > 0)
-                    {
-                        queueCount += (l.Players != null ? l.Players.Count : 0);
-                    }
-                }
-                catch { /* ignore */ }
-            }
-            UpdateArenaQueueCount(queueCount);
-
-            if (sameArena.Count > 0)
-            {
-                // Found existing lobby for this arena, try to join it
-                var lobby = sameArena[0];
-            
-            string currentPlayerUsername = GetPlayerUsername();
-            
-            var joinOptions = new JoinLobbyByIdOptions
-            {
-                Player = new Unity.Services.Lobbies.Models.Player
-                {
-                    Data = new Dictionary<string, PlayerDataObject>
-                    {
-                        {"username", new PlayerDataObject(PlayerDataObject.VisibilityOptions.Public, currentPlayerUsername)},
-                        {"trophies", new PlayerDataObject(PlayerDataObject.VisibilityOptions.Public, playerTrophies.ToString())},
-                        {"deckSize", new PlayerDataObject(PlayerDataObject.VisibilityOptions.Public, currentDeck.Count.ToString())},
-                        {"ready", new PlayerDataObject(PlayerDataObject.VisibilityOptions.Public, "0")}
-                    }
+                    new QueryFilter(QueryFilter.FieldOptions.AvailableSlots, "1", QueryFilter.OpOptions.GE)
                 }
             };
             
-                var joinResponse = LobbyService.Instance.JoinLobbyByIdAsync(lobby.Id, joinOptions);
-            yield return new WaitUntil(() => joinResponse.IsCompleted);
-            bool joinRateLimited = joinResponse.Exception != null &&
-                                   (joinResponse.Exception.Message != null &&
-                                    (joinResponse.Exception.Message.Contains("Too Many Requests") || joinResponse.Exception.Message.Contains("429")));
-                if (joinResponse.Exception == null)
-                {
-                    currentLobby = joinResponse.Result;
+            var response = LobbyService.Instance.QueryLobbiesAsync(queryOptions);
+            yield return new WaitUntil(() => response.IsCompleted);
+            rateLimited = response.Exception != null &&
+                               (response.Exception.Message != null &&
+                                (response.Exception.Message.Contains("Too Many Requests") || response.Exception.Message.Contains("429")));
 
-                    // Verify lobby arena matches selection
-                    string lobbyArena = (currentLobby.Data != null && currentLobby.Data.ContainsKey("arena")) ? currentLobby.Data["arena"].Value : null;
-                    if (string.IsNullOrEmpty(lobbyArena) || lobbyArena != selectedArena.arenaID)
-                    {
-                        Debug.LogWarning("Joined lobby arena mismatch; leaving and continuing search.");
-                        LeaveLobby();
-                    }
-                    else
-                    {
-                        // Extract opponent information (the host who created the lobby)
-                        ExtractOpponentFromLobby();
-                        ShowOpponentFound();
-                        
-                        currentState = MatchmakingState.FoundMatch;
-                        SetStatus("Match found! Joining...");
-                        yield break;
-                    }
-                }
-                else if (joinRateLimited)
+            if (response.Exception == null)
+            {
+                // Filter to lobbies for the selected arena and with available slots
+                var all = response.Result.Results;
+                var sameArena = all.Where(l => l != null && l.Data != null && l.Data.ContainsKey("arena") && l.Data["arena"].Value == selectedArena.arenaID).ToList();
+
+                // Update queue count for this arena (sum players in open lobbies)
+                int queueCount = 0;
+                foreach (var l in sameArena)
                 {
-                    // Rate limited when joining, back off and retry logic will be handled by outer loop
-                    lobbyPollDelaySeconds = Mathf.Min(LobbyPollMaxDelay, lobbyPollDelaySeconds * LobbyPollBackoffFactor);
-                    SetStatus("Rate limited. Slowing down join attempts...");
-                    yield return new WaitForSeconds(lobbyPollDelaySeconds);
+                    // Consider only lobbies with at least one open slot to represent "queueing"
+                    try
+                    {
+                        if ((l.MaxPlayers - (l.Players?.Count ?? 0)) > 0)
+                        {
+                            queueCount += (l.Players != null ? l.Players.Count : 0);
+                        }
+                    }
+                    catch { /* ignore */ }
+                }
+                UpdateArenaQueueCount(queueCount);
+
+                if (sameArena.Count > 0)
+                {
+                    // Found existing lobby for this arena, try to join it
+                    var lobby = sameArena[0];
+                
+                string currentPlayerUsername = GetPlayerUsername();
+                
+                var joinOptions = new JoinLobbyByIdOptions
+                {
+                    Player = new Unity.Services.Lobbies.Models.Player
+                    {
+                        Data = new Dictionary<string, PlayerDataObject>
+                        {
+                            {"username", new PlayerDataObject(PlayerDataObject.VisibilityOptions.Public, currentPlayerUsername)},
+                            {"trophies", new PlayerDataObject(PlayerDataObject.VisibilityOptions.Public, playerTrophies.ToString())},
+                            {"deckSize", new PlayerDataObject(PlayerDataObject.VisibilityOptions.Public, currentDeck.Count.ToString())},
+                            {"ready", new PlayerDataObject(PlayerDataObject.VisibilityOptions.Public, "0")}
+                        }
+                    }
+                };
+                
+                    var joinResponse = LobbyService.Instance.JoinLobbyByIdAsync(lobby.Id, joinOptions);
+                yield return new WaitUntil(() => joinResponse.IsCompleted);
+                bool joinRateLimited = joinResponse.Exception != null &&
+                                       (joinResponse.Exception.Message != null &&
+                                        (joinResponse.Exception.Message.Contains("Too Many Requests") || joinResponse.Exception.Message.Contains("429")));
+                    if (joinResponse.Exception == null)
+                    {
+                        currentLobby = joinResponse.Result;
+
+                        // Verify lobby arena matches selection
+                        string lobbyArena = (currentLobby.Data != null && currentLobby.Data.ContainsKey("arena")) ? currentLobby.Data["arena"].Value : null;
+                        if (string.IsNullOrEmpty(lobbyArena) || lobbyArena != selectedArena.arenaID)
+                        {
+                            Debug.LogWarning("Joined lobby arena mismatch; leaving and continuing search.");
+                            LeaveLobby();
+                        }
+                        else
+                        {
+                            // Extract opponent information (the host who created the lobby)
+                            ExtractOpponentFromLobby();
+                            ShowOpponentFound();
+                            
+                            currentState = MatchmakingState.FoundMatch;
+                            SetStatus("Match found! Joining...");
+                            yield break;
+                        }
+                    }
+                    else if (joinRateLimited)
+                    {
+                        // Rate limited when joining, back off and retry logic will be handled by outer loop
+                        lobbyPollDelaySeconds = Mathf.Min(LobbyPollMaxDelay, lobbyPollDelaySeconds * LobbyPollBackoffFactor);
+                        SetStatus("Rate limited. Slowing down join attempts...");
+                        yield return new WaitForSeconds(lobbyPollDelaySeconds);
+                    }
                 }
             }
-        }
-        else if (rateLimited)
-        {
-            // Rate limited on query, back off and retry later
-            lobbyPollDelaySeconds = Mathf.Min(LobbyPollMaxDelay, lobbyPollDelaySeconds * LobbyPollBackoffFactor);
-            SetStatus("Rate limited. Slowing down search...");
-            yield return new WaitForSeconds(lobbyPollDelaySeconds);
+            else if (rateLimited)
+            {
+                // Rate limited on query, back off and retry later
+                lobbyPollDelaySeconds = Mathf.Min(LobbyPollMaxDelay, lobbyPollDelaySeconds * LobbyPollBackoffFactor);
+                SetStatus("Rate limited. Slowing down search...");
+                yield return new WaitForSeconds(lobbyPollDelaySeconds);
+            }
         }
         
         // No suitable lobby found, wait a short randomized delay to reduce simultaneous lobby creation races, then create one
@@ -988,7 +1072,8 @@ public class MatchmakingManager : MonoBehaviour
                 // same-arena lobby to join. This breaks the "both players created a lobby" deadlock.
                 bool weAreHost = false;
                 try { weAreHost = currentLobby.HostId == AuthenticationService.Instance.PlayerId; } catch { }
-                if (weAreHost && (Time.time - lastHostSwitchAttemptTime) > HostSwitchIntervalSeconds)
+                bool skipJoinForDebug = forceHostWhenDebugging && Debug.isDebugBuild;
+                if (!skipJoinForDebug && weAreHost && (Time.time - lastHostSwitchAttemptTime) > HostSwitchIntervalSeconds)
                 {
                     lastHostSwitchAttemptTime = Time.time;
                     yield return StartCoroutine(ConsiderSwitchToExistingLobby());
@@ -1486,6 +1571,15 @@ public class MatchmakingManager : MonoBehaviour
             {
                 playerSideToggle.SetIsOnWithoutNotify(localPlayerIsPlayer1 == localIsPlayer1WhenToggleOn);
             }
+            // Persist side early so battle scene auto-start logic has it even if host loads scene before StartMultiplayerMatch writes prefs
+            try
+            {
+                PlayerPrefs.SetInt("LocalPlayerIsPlayer1", localPlayerIsPlayer1 ? 1 : 0);
+                if (!string.IsNullOrEmpty(localPlayerUsername)) PlayerPrefs.SetString("LocalPlayerUsername", localPlayerUsername);
+                if (!string.IsNullOrEmpty(opponentUsername)) PlayerPrefs.SetString("OpponentUsername", opponentUsername);
+                PlayerPrefs.Save();
+            }
+            catch { }
         }
         
         // Update player side labels to show opponent names

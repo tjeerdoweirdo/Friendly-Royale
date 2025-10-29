@@ -28,22 +28,15 @@ public class BattleNetworkAutoManager : MonoBehaviour
     [Tooltip("How to start if not listening. Prefer None when scenes are loaded by a lobby/matchmaker.")]
     public StartMode startMode = StartMode.None;
 
+    [Tooltip("If startMode=None and this is enabled, auto-start by saved player side: Player1=Host, Player2=Client.")]
+    public bool startBySavedPlayerSideIfNotListening = true;
+
     [Header("Dev HUD (optional)")]
     [Tooltip("Create a lightweight dev HUD in Editor/Development builds for start/stop.")]
     public bool addDevHudInDevBuilds = true;
 
     void Awake()
     {
-        // Do nothing for practice/offline mode
-        try
-        {
-            if (GameModeManager.Instance != null && GameModeManager.Instance.IsOfflineMode())
-            {
-                return;
-            }
-        }
-        catch { }
-
         if (ensureNetworkManager)
         {
             EnsureNetworkManager();
@@ -52,28 +45,80 @@ public class BattleNetworkAutoManager : MonoBehaviour
 
     void Start()
     {
+        // Add the HUD first (independent of build type) if requested
+        if (addDevHudInDevBuilds && FindAnyObjectByType<NetworkHUDDev>() == null)
+        {
+            var hudGo = new GameObject("NetworkHUD_DEV");
+            hudGo.AddComponent<NetworkHUDDev>();
+            DontDestroyOnLoad(hudGo);
+        }
+
         // After Awake so any existing managers created elsewhere can initialize first
         var nm = NetworkManager.Singleton;
         if (nm == null)
         {
+            Debug.LogWarning("[BattleNetworkAutoManager] No NetworkManager after Awake. HUD created; waiting for external network init.");
             return;
         }
 
-        if (addDevHudInDevBuilds)
+        // Ensure UnityTransport exists on the active NetworkManager
+        if (nm.GetComponent<UnityTransport>() == null)
         {
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-            if (FindAnyObjectByType<NetworkHUDDev>() == null)
+            nm.gameObject.AddComponent<UnityTransport>();
+        }
+        // Safety: if connection approval is enabled but no callback is set, disable approval to avoid start failures
+        try
+        {
+            if (nm.NetworkConfig.ConnectionApproval && nm.ConnectionApprovalCallback == null)
             {
-                var hudGo = new GameObject("NetworkHUD_DEV");
-                hudGo.AddComponent<NetworkHUDDev>();
-                DontDestroyOnLoad(hudGo);
+                nm.NetworkConfig.ConnectionApproval = false;
+                Debug.Log("[BattleNetworkAutoManager] Disabled ConnectionApproval (no callback) to allow auto-start.");
             }
-#endif
+        }
+        catch { }
+
+        // Check if matchmaking requested auto network start (set in PlayerPrefs by matchmaking flow)
+        int autoFlag = 0;
+        try { autoFlag = PlayerPrefs.GetInt("AutoNetworkStart", 0); } catch { autoFlag = 0; }
+
+        // Don't auto-start in practice/offline unless explicitly asked via AutoNetworkStart
+        bool isOffline = false;
+        try { isOffline = (GameModeManager.Instance != null && GameModeManager.Instance.IsOfflineMode()); } catch { isOffline = false; }
+        if (isOffline && autoFlag == 0)
+        {
+            return;
         }
 
         if (autoStartIfNotListening && !nm.IsListening && startMode != StartMode.None)
         {
             TryAutoStart(startMode);
+        }
+        else if (!nm.IsListening && startMode == StartMode.None && startBySavedPlayerSideIfNotListening)
+        {
+            // Decide host/client by saved player side (set by matchmaking before scene load)
+            int side = PlayerPrefs.GetInt("LocalPlayerIsPlayer1", 1);
+            if (side == 1)
+            {
+                Debug.Log("[BattleNetworkAutoManager] Auto-starting as Host (Player1)");
+                TryAutoStart(StartMode.Host);
+            }
+            else
+            {
+                Debug.Log("[BattleNetworkAutoManager] Auto-starting as Client (Player2)");
+                TryAutoStart(StartMode.Client);
+            }
+        }
+
+        // Fallback: if auto-start was requested but we're still not listening, retry shortly (handles race conditions)
+        if (autoFlag == 1 && !nm.IsListening)
+        {
+            StartCoroutine(RetryAutoStartBySide());
+        }
+
+        // Clear the auto-start flag so subsequent scenes don't accidentally auto-start
+        if (autoFlag == 1)
+        {
+            try { PlayerPrefs.SetInt("AutoNetworkStart", 0); PlayerPrefs.Save(); } catch { }
         }
 
         // If we're already listening and are server/host, ensure helpers
@@ -189,6 +234,39 @@ public class BattleNetworkAutoManager : MonoBehaviour
         DontDestroyOnLoad(go);
         netObj.Spawn();
         Debug.Log("[BattleNetworkAutoManager] Spawned NetworkCardPlacementSystem_AUTO");
+    }
+
+    private System.Collections.IEnumerator RetryAutoStartBySide()
+    {
+        var nm = NetworkManager.Singleton;
+        if (nm == null) yield break;
+        yield return null; // wait one frame
+        if (nm.IsListening) yield break;
+        // Ensure transport and config again
+        if (nm.GetComponent<UnityTransport>() == null)
+        {
+            nm.gameObject.AddComponent<UnityTransport>();
+        }
+        try
+        {
+            if (nm.NetworkConfig.ConnectionApproval && nm.ConnectionApprovalCallback == null)
+            {
+                nm.NetworkConfig.ConnectionApproval = false;
+            }
+        }
+        catch { }
+        int side = 1;
+        try { side = PlayerPrefs.GetInt("LocalPlayerIsPlayer1", 1); } catch { side = 1; }
+        if (side == 1)
+        {
+            Debug.Log("[BattleNetworkAutoManager] Retry: StartHost()");
+            nm.StartHost();
+        }
+        else
+        {
+            Debug.Log("[BattleNetworkAutoManager] Retry: StartClient()");
+            nm.StartClient();
+        }
     }
 
     // Convenience context menu for quick testing in Editor
