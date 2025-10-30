@@ -172,6 +172,7 @@ GameObject:
   - component: {fileID: 5712628907913759583}
   - component: {fileID: 812165331579341545}
   - component: {fileID: 1347668344570992898}
+  - component: {fileID: -81139225402356729}
   - component: {fileID: 4140175646981416405}
   - component: {fileID: 3979890752780099361}
   - component: {fileID: 3470195664253330283}
@@ -276,6 +277,27 @@ CapsuleCollider:
   m_Height: 2
   m_Direction: 1
   m_Center: {x: 0, y: 0, z: 0}
+--- !u!114 &-81139225402356729
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6699622725746716999}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  GlobalObjectIdHash: 1155548524
+  InScenePlacedSourceGlobalObjectIdHash: 0
+  AlwaysReplicateAsRoot: 0
+  SynchronizeTransform: 1
+  ActiveSceneSynchronization: 1
+  SceneMigrationSynchronization: 1
+  SpawnWithObservers: 1
+  DontDestroyWithOwner: 0
+  AutoObjectParentSync: 1
 --- !u!114 &4140175646981416405
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -56,6 +56,12 @@ public class OnlineUsersPanel : MonoBehaviour
     [Tooltip("Max historical users to keep on disk")] public int maxHistoryEntries = 2000;
     [Tooltip("Always include the current player in the list/history")] public bool includeCurrentPlayer = true;
 
+    [Header("Leaderboard")]
+    [Tooltip("Render as a leaderboard: sort primarily by trophies and show ranks")] public bool leaderboardMode = true;
+    [Tooltip("Maximum entries to display in leaderboard mode (top N). Set 0 or negative for unlimited.")] public int leaderboardMaxEntries = 50;
+    [Tooltip("Always include current player even if outside top N (appended at the end)")] public bool alwaysIncludeSelf = true;
+    [Tooltip("When ranks tie, use username alphabetical as a secondary sort")] public bool tieBreakAlphabetical = true;
+
     [Serializable]
     private class UserSeen
     {
@@ -216,9 +222,9 @@ public class OnlineUsersPanel : MonoBehaviour
             results = new List<Lobby>();
         }
 
-        _lastResults = results;
-        // Collect unique currently-online players across lobbies
-        var uniquePlayers = new Dictionary<string, (string username, int trophies)>();
+    _lastResults = results;
+    // Collect unique currently-online players across lobbies
+    var uniquePlayers = new Dictionary<string, (string username, int trophies)>();
         foreach (var lobby in results)
         {
             if (lobby?.Players == null) continue;
@@ -260,28 +266,30 @@ public class OnlineUsersPanel : MonoBehaviour
             }
         }
 
-    var combined = new List<(string id, string username, int trophies, long lastSeen, bool online)>();
-    var addedIds = new HashSet<string>();
+        // Build the participant pool (includes online and optionally offline history and current user)
+        var pool = new List<(string id, string username, int trophies, long lastSeen, bool online)>();
+        var added = new HashSet<string>();
 
-        // Add all online entries
+        // Online first
         foreach (var kv in uniquePlayers)
         {
             var hs = _history.ContainsKey(kv.Key) ? _history[kv.Key] : null;
             long lastSeen = hs != null ? hs.lastSeenUnix : DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            if (!string.IsNullOrEmpty(kv.Key) && addedIds.Add(kv.Key))
+            if (!string.IsNullOrEmpty(kv.Key) && added.Add(kv.Key))
             {
-                combined.Add((kv.Key, kv.Value.username, kv.Value.trophies, lastSeen, true));
+                pool.Add((kv.Key, kv.Value.username, kv.Value.trophies, lastSeen, true));
             }
         }
 
-        // Ensure current player is present in history and list
+        // Ensure current player gets into history and pool
+        (string id, string username, int trophies) meInfoFinal = (null, null, 0);
         if (includeCurrentPlayer)
         {
             var meInfo = ResolveCurrentUser();
+            meInfoFinal = meInfo;
             string myId = meInfo.id;
             if (!string.IsNullOrEmpty(myId))
             {
-                // Update history
                 var nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 if (!_history.TryGetValue(myId, out var me))
                 {
@@ -294,28 +302,27 @@ public class OnlineUsersPanel : MonoBehaviour
                     me.trophies = Mathf.Max(me.trophies, meInfo.trophies);
                     me.lastSeenUnix = nowUnix;
                 }
-
-                // Add to combined list if not already from online set
-                if (!uniquePlayers.ContainsKey(myId) && addedIds.Add(myId))
+                if (!added.Contains(myId))
                 {
-                    combined.Add((myId, me.username, me.trophies, me.lastSeenUnix, false));
+                    pool.Add((myId, me.username, me.trophies, me.lastSeenUnix, uniquePlayers.ContainsKey(myId)));
+                    added.Add(myId);
                 }
             }
         }
 
+        // Offline history if enabled
         if (includeOfflineHistory)
         {
             foreach (var kv in _history)
             {
-                if (uniquePlayers.ContainsKey(kv.Key)) continue; // already added as online
                 if (string.IsNullOrEmpty(kv.Key)) continue;
-                if (!addedIds.Add(kv.Key)) continue; // avoid duplicates (e.g., current user already added)
-                combined.Add((kv.Key, kv.Value.username, kv.Value.trophies, kv.Value.lastSeenUnix, false));
+                if (added.Contains(kv.Key)) continue;
+                pool.Add((kv.Key, kv.Value.username, kv.Value.trophies, kv.Value.lastSeenUnix, false));
+                added.Add(kv.Key);
             }
         }
 
-        // If nothing at all, show empty state
-        if (combined.Count == 0)
+        if (pool.Count == 0)
         {
             if (emptyText != null)
             {
@@ -325,18 +332,80 @@ public class OnlineUsersPanel : MonoBehaviour
             yield break;
         }
 
-        // Sort: online first; online by trophies desc; offline by lastSeen desc
-        combined.Sort((a, b) =>
+        // Ranking: sort by trophies desc (then optional ties by username asc), compute standard competition ranks
+        pool.Sort((a, b) =>
         {
-            if (a.online != b.online) return b.online.CompareTo(a.online);
-            if (a.online && b.online) return b.trophies.CompareTo(a.trophies);
+            int cmp = b.trophies.CompareTo(a.trophies);
+            if (cmp != 0) return cmp;
+            if (tieBreakAlphabetical)
+            {
+                cmp = string.Compare(a.username, b.username, StringComparison.OrdinalIgnoreCase);
+                if (cmp != 0) return cmp;
+            }
+            // Final tiebreak: recent activity
             return b.lastSeen.CompareTo(a.lastSeen);
         });
+
+        var rankById = new Dictionary<string, int>(pool.Count);
+        int processed = 0;
+        int lastRank = 0;
+        int? lastTrophy = null;
+        foreach (var e in pool)
+        {
+            processed++;
+            if (lastTrophy == null || e.trophies != lastTrophy.Value)
+            {
+                lastRank = processed; // standard competition ranking (1,2,2,4)
+                lastTrophy = e.trophies;
+            }
+            rankById[e.id] = lastRank;
+        }
+
+        // Determine displayed set: top N (if limited) and ensure self if requested
+        var display = new List<(string id, string username, int trophies, long lastSeen, bool online, int rank)>();
+        int limit = leaderboardMode && leaderboardMaxEntries > 0 ? leaderboardMaxEntries : int.MaxValue;
+        for (int i = 0; i < pool.Count && i < limit; i++)
+        {
+            var e = pool[i];
+            display.Add((e.id, e.username, e.trophies, e.lastSeen, e.online, rankById[e.id]));
+        }
+
+        // If self is outside top N, append to end
+        if (leaderboardMode && alwaysIncludeSelf && includeCurrentPlayer && !string.IsNullOrEmpty(meInfoFinal.id))
+        {
+            bool alreadyListed = display.Exists(x => x.id == meInfoFinal.id);
+            if (!alreadyListed && rankById.TryGetValue(meInfoFinal.id, out int myRank))
+            {
+                // Find the authoritative lastSeen/online from pool
+                var idx = pool.FindIndex(x => x.id == meInfoFinal.id);
+                if (idx >= 0)
+                {
+                    var e = pool[idx];
+                    display.Add((e.id, e.username, e.trophies, e.lastSeen, e.online, myRank));
+                }
+            }
+        }
+
+        // Non-leaderboard mode fallback: show online first then by trophies/last seen
+        if (!leaderboardMode)
+        {
+            display.Clear();
+            pool.Sort((a, b) =>
+            {
+                if (a.online != b.online) return b.online.CompareTo(a.online);
+                if (a.online && b.online) return b.trophies.CompareTo(a.trophies);
+                return b.lastSeen.CompareTo(a.lastSeen);
+            });
+            foreach (var e in pool)
+            {
+                display.Add((e.id, e.username, e.trophies, e.lastSeen, e.online, 0));
+            }
+        }
 
         // Ensure we have a content parent; try to auto-find if not assigned
         EnsureContentParent();
 
-        foreach (var entry in combined)
+        foreach (var entry in display)
         {
             if (contentParent == null)
             {
@@ -356,7 +425,7 @@ public class OnlineUsersPanel : MonoBehaviour
                 row.transform.SetParent(contentParent, false);
                 var text = row.AddComponent<TextMeshProUGUI>();
                 text.fontSize = 24f;
-                text.text = FormatFallbackRow(entry.username, entry.trophies, entry.online, entry.lastSeen);
+                text.text = FormatFallbackRow(entry.username, entry.trophies, entry.online, entry.lastSeen, entry.rank);
                 continue;
             }
 
@@ -367,6 +436,8 @@ public class OnlineUsersPanel : MonoBehaviour
             if (binding != null)
             {
                 binding.SetRow(entry.id, entry.username, entry.trophies, entry.online, entry.lastSeen, isMe);
+                // Inform rank if supported
+                try { binding.SetRank(entry.rank); } catch { }
                 continue;
             }
 
@@ -374,7 +445,11 @@ public class OnlineUsersPanel : MonoBehaviour
             TMP_Text usernameText = ResolveRowText(row.transform, usernameChildName, new string[]{"username"});
             TMP_Text trophyText = ResolveRowText(row.transform, trophyChildName, new string[]{"trophy","trophies"});
             TMP_Text lastSeenText = ResolveRowText(row.transform, lastSeenChildName, new string[]{"last","seen"});
-            if (usernameText != null) usernameText.text = isMe ? ($"{entry.username} (You)") : entry.username;
+            if (usernameText != null)
+            {
+                string prefix = leaderboardMode && entry.rank > 0 ? ($"#{entry.rank} ") : string.Empty;
+                usernameText.text = prefix + (isMe ? ($"{entry.username} (You)") : entry.username);
+            }
             if (trophyText != null) trophyText.text = entry.trophies.ToString();
             if (lastSeenText != null) lastSeenText.text = entry.online ? "Online now" : FormatLastSeen(entry.lastSeen);
         }
@@ -424,10 +499,11 @@ public class OnlineUsersPanel : MonoBehaviour
         }
     }
 
-    private string FormatFallbackRow(string username, int trophies, bool online, long lastSeen)
+    private string FormatFallbackRow(string username, int trophies, bool online, long lastSeen, int rank = 0)
     {
         string seen = online ? "Online now" : FormatLastSeen(lastSeen);
-        return $"{username}  -  {trophies}🏆  ({seen})";
+        string prefix = (leaderboardMode && rank > 0) ? ("#" + rank + " ") : string.Empty;
+        return $"{prefix}{username}  -  {trophies}🏆  ({seen})";
     }
 
     private string FormatLastSeen(long lastSeenUnix)
@@ -648,13 +724,29 @@ public class OnlineUsersPanel : MonoBehaviour
         if (_isPanelVisible)
             _slideCoroutine = StartCoroutine(SlidePanel(hiddenPosition, false));
         else
+        {
+            // Close other panels to avoid overlap
+            var settings = FindFirstObjectByType<Settingspanel>();
+            if (settings != null) settings.HidePanelImmediate();
+            var shop = FindFirstObjectByType<ShopManager>();
+            if (shop != null) shop.HideShopImmediate();
+            var mm = FindFirstObjectByType<MatchmakingManager>();
+            if (mm != null) mm.HideMatchmakingPanel();
             _slideCoroutine = StartCoroutine(SlidePanel(shownPosition, true));
+        }
     }
 
     public void ShowPanel()
     {
         if (_isPanelVisible) return;
         if (_slideCoroutine != null) StopCoroutine(_slideCoroutine);
+        // Close other panels to avoid overlap
+        var settings = FindFirstObjectByType<Settingspanel>();
+        if (settings != null) settings.HidePanelImmediate();
+        var shop = FindFirstObjectByType<ShopManager>();
+        if (shop != null) shop.HideShopImmediate();
+        var mm = FindFirstObjectByType<MatchmakingManager>();
+        if (mm != null) mm.HideMatchmakingPanel();
         _slideCoroutine = StartCoroutine(SlidePanel(shownPosition, true));
     }
 

@@ -54,36 +54,53 @@ public class NetworkHUDDev : MonoBehaviour
     {
         var nm = NetworkManager.Singleton;
         GUILayout.BeginVertical();
-        GUILayout.Label(nm == null ? "No NetworkManager" : StatusString(nm));
-        GUILayout.Space(6);
+        try
+        {
+            GUILayout.Label(nm == null ? "No NetworkManager" : StatusString(nm));
+            GUILayout.Space(6);
 
-        GUI.enabled = nm != null && !nm.IsListening;
-        if (GUILayout.Button("Start Host"))
-        {
-            EnsureTransport(nm);
-            nm.StartHost();
-        }
-        if (GUILayout.Button("Start Client"))
-        {
-            EnsureTransport(nm);
-            nm.StartClient();
-        }
-        if (GUILayout.Button("Start Server"))
-        {
-            EnsureTransport(nm);
-            nm.StartServer();
-        }
-        GUI.enabled = true;
+            // Relay protocol preference
+            string proto = PlayerPrefs.GetString("RelayProtocol", "wss");
+            GUILayout.Label($"Relay Protocol: {proto}");
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Use WSS")) { PlayerPrefs.SetString("RelayProtocol", "wss"); PlayerPrefs.Save(); }
+            if (GUILayout.Button("Use DTLS")) { PlayerPrefs.SetString("RelayProtocol", "dtls"); PlayerPrefs.Save(); }
+            GUILayout.EndHorizontal();
+            GUILayout.Space(6);
 
-        GUI.enabled = nm != null && nm.IsListening;
-        if (GUILayout.Button("Shutdown"))
-        {
-            nm.Shutdown();
-        }
-        GUI.enabled = true;
+            GUI.enabled = nm != null && !nm.IsListening;
+            if (GUILayout.Button("Start Host"))
+            {
+                EnsureTransport(nm);
+                ConfigureConnectionForServer(nm); // host listens on server endpoint
+                nm.StartHost();
+            }
+            if (GUILayout.Button("Start Client"))
+            {
+                EnsureTransport(nm);
+                ConfigureConnectionForClient(nm);
+                nm.StartClient();
+            }
+            if (GUILayout.Button("Start Server"))
+            {
+                EnsureTransport(nm);
+                ConfigureConnectionForServer(nm);
+                nm.StartServer();
+            }
+            GUI.enabled = true;
 
-        GUILayout.EndVertical();
-        GUI.DragWindow(new Rect(0,0, 10000, 20));
+            GUI.enabled = nm != null && nm.IsListening;
+            if (GUILayout.Button("Shutdown"))
+            {
+                nm.Shutdown();
+            }
+            GUI.enabled = true;
+        }
+        finally
+        {
+            GUILayout.EndVertical();
+            GUI.DragWindow(new Rect(0,0, 10000, 20));
+        }
     }
 
     private static void EnsureTransport(NetworkManager nm)
@@ -95,9 +112,36 @@ public class NetworkHUDDev : MonoBehaviour
         }
     }
 
+    private static void ConfigureConnectionForServer(NetworkManager nm)
+    {
+        var utp = nm != null ? nm.GetComponent<UnityTransport>() : null;
+        if (utp == null) return;
+        // Bind server/host on all interfaces at default dev port
+        string ip = PlayerPrefs.GetString("Net_IP_Server", "0.0.0.0");
+        ushort port = (ushort)PlayerPrefs.GetInt("Net_Port", 7777);
+        try { utp.SetConnectionData(ip, port); } catch { }
+    }
+
+    private static void ConfigureConnectionForClient(NetworkManager nm)
+    {
+        var utp = nm != null ? nm.GetComponent<UnityTransport>() : null;
+        if (utp == null) return;
+        // Connect to local host by default in dev HUD
+        string ip = PlayerPrefs.GetString("Net_IP_Client", "127.0.0.1");
+        ushort port = (ushort)PlayerPrefs.GetInt("Net_Port", 7777);
+        try { utp.SetConnectionData(ip, port); } catch { }
+    }
+
     private static string StatusString(NetworkManager nm)
     {
         if (nm == null) return "No NetworkManager";
-        return $"Srv:{nm.IsServer} Cl:{nm.IsClient} Host:{nm.IsHost} Listening:{nm.IsListening}\nClients:{nm.ConnectedClients?.Count ?? 0}";
+        int clientCount = 0;
+        try
+        {
+            // ConnectedClients throws on non-server; ConnectedClientsIds works on both
+            clientCount = (nm != null && nm.IsListening && nm.ConnectedClientsIds != null) ? nm.ConnectedClientsIds.Count : 0;
+        }
+        catch { clientCount = 0; }
+        return $"Srv:{nm.IsServer} Cl:{nm.IsClient} Host:{nm.IsHost} Listening:{nm.IsListening}\nClients:{clientCount}";
     }
 }

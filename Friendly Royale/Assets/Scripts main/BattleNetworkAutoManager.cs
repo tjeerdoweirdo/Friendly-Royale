@@ -61,18 +61,29 @@ public class BattleNetworkAutoManager : MonoBehaviour
             return;
         }
 
+        // Practice/offline hard stop: if practice flag is set, never auto-start networking
+        try { if (PlayerPrefs.GetInt("PracticeModeActive", 0) == 1) return; } catch { }
+
         // Ensure UnityTransport exists on the active NetworkManager
         if (nm.GetComponent<UnityTransport>() == null)
         {
             nm.gameObject.AddComponent<UnityTransport>();
         }
-        // Safety: if connection approval is enabled but no callback is set, disable approval to avoid start failures
+        // Safety: if no player prefab is configured and no approval callback is set, set a permissive approval that does not create player objects
         try
         {
-            if (nm.NetworkConfig.ConnectionApproval && nm.ConnectionApprovalCallback == null)
+            bool hasPlayerPrefab = nm.NetworkConfig?.PlayerPrefab != null;
+            if (!hasPlayerPrefab)
             {
+                // Force a bypass approval if no player prefab is configured to prevent NGO from spawning a null player object
+                nm.NetworkConfig.ConnectionApproval = true;
+                nm.ConnectionApprovalCallback = ApprovalBypassNoPlayer;
+                Debug.Log("[BattleNetworkAutoManager] Using bypass ConnectionApproval (no PlayerPrefab).");
+            }
+            else if (nm.ConnectionApprovalCallback == null)
+            {
+                // If there is a prefab but no approval, leave ConnectionApproval off (default NGO flow)
                 nm.NetworkConfig.ConnectionApproval = false;
-                Debug.Log("[BattleNetworkAutoManager] Disabled ConnectionApproval (no callback) to allow auto-start.");
             }
         }
         catch { }
@@ -199,6 +210,7 @@ public class BattleNetworkAutoManager : MonoBehaviour
     {
         var nm = NetworkManager.Singleton;
         if (nm == null) return;
+        ConfigureTransportForMode(nm, mode);
         switch (mode)
         {
             case StartMode.Host:
@@ -276,7 +288,9 @@ public class BattleNetworkAutoManager : MonoBehaviour
         {
             if (nm.NetworkConfig.ConnectionApproval && nm.ConnectionApprovalCallback == null)
             {
-                nm.NetworkConfig.ConnectionApproval = false;
+                // Install bypass approval to avoid NRE when no player prefab is set
+                nm.NetworkConfig.ConnectionApproval = true;
+                nm.ConnectionApprovalCallback = ApprovalBypassNoPlayer;
             }
         }
         catch { }
@@ -285,11 +299,13 @@ public class BattleNetworkAutoManager : MonoBehaviour
         if (side == 1)
         {
             Debug.Log("[BattleNetworkAutoManager] Retry: StartHost()");
+            ConfigureTransportForMode(nm, StartMode.Host);
             nm.StartHost();
         }
         else
         {
             Debug.Log("[BattleNetworkAutoManager] Retry: StartClient()");
+            ConfigureTransportForMode(nm, StartMode.Client);
             nm.StartClient();
         }
     }
@@ -308,14 +324,54 @@ public class BattleNetworkAutoManager : MonoBehaviour
         }
         try
         {
-            if (nm.NetworkConfig.ConnectionApproval && nm.ConnectionApprovalCallback == null)
+            bool hasPlayerPrefab = nm.NetworkConfig?.PlayerPrefab != null;
+            if (nm.ConnectionApprovalCallback == null)
             {
-                nm.NetworkConfig.ConnectionApproval = false;
+                nm.NetworkConfig.ConnectionApproval = true;
+                nm.ConnectionApprovalCallback = ApprovalBypassNoPlayer;
+            }
+            else if (!hasPlayerPrefab && nm.NetworkConfig.ConnectionApproval == false)
+            {
+                nm.NetworkConfig.ConnectionApproval = true;
+                nm.ConnectionApprovalCallback = ApprovalBypassNoPlayer;
             }
         }
         catch { }
+        ConfigureTransportForMode(nm, StartMode.Host);
         Debug.Log("[BattleNetworkAutoManager] Starting Host after server-only shutdown...");
         nm.StartHost();
+    }
+
+    // Approve all and do not create player objects (avoids NREs when no PlayerPrefab configured)
+    private void ApprovalBypassNoPlayer(NetworkManager.ConnectionApprovalRequest request, NetworkManager.ConnectionApprovalResponse response)
+    {
+        response.Approved = true;
+        response.CreatePlayerObject = false;
+    }
+
+    private void ConfigureTransportForMode(NetworkManager nm, StartMode mode)
+    {
+        if (nm == null) return;
+        var utp = nm.GetComponent<UnityTransport>();
+        if (utp == null) return;
+        try
+        {
+            // Read PlayerPrefs overrides (settable via NetworkHUDDev)
+            ushort port = (ushort)PlayerPrefs.GetInt("Net_Port", 7777);
+            if (mode == StartMode.Client)
+            {
+                string ipClient = PlayerPrefs.GetString("Net_IP_Client", "127.0.0.1");
+                // Default to loopback for local client testing
+                utp.SetConnectionData(ipClient, port);
+            }
+            else
+            {
+                // Host/Server binds to all interfaces (override allowed)
+                string ipServer = PlayerPrefs.GetString("Net_IP_Server", "0.0.0.0");
+                utp.SetConnectionData(ipServer, port);
+            }
+        }
+        catch { }
     }
 
     // Convenience context menu for quick testing in Editor
@@ -342,3 +398,4 @@ public class BattleNetworkAutoManager : MonoBehaviour
     }
 #endif
 }
+

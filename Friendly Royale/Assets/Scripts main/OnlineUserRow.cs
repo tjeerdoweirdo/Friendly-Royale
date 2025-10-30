@@ -12,10 +12,15 @@ public class OnlineUserRow : MonoBehaviour
     public TMP_Text usernameText;
     public TMP_Text trophyText;
     public TMP_Text lastSeenText;
+    [Tooltip("Optional rank text field (e.g., '#1')")] public TMP_Text rankText;
 
     [Header("Colors")]
     [Tooltip("Text color when the player is currently online")] public Color onlineColor = Color.green;
     [Tooltip("Text color when the player is offline")] public Color offlineColor = Color.red;
+    [Tooltip("Rank color for #1")] public Color rank1Color = new Color(1f, 0.84f, 0f); // gold
+    [Tooltip("Rank color for #2")] public Color rank2Color = new Color(0.75f, 0.75f, 0.75f); // silver
+    [Tooltip("Rank color for #3")] public Color rank3Color = new Color(0.8f, 0.5f, 0.2f); // bronze
+    [Tooltip("Default rank color")] public Color rankDefaultColor = Color.white;
 
     [Header("Auto-Bind by Child Names")]
     [Tooltip("If true, this component will auto-find child TMP_Texts by exact name or keywords when fields are not assigned")]
@@ -37,6 +42,9 @@ public class OnlineUserRow : MonoBehaviour
     [Header("Formatting")]
     [Tooltip("Append '(You)' to the username when this row is the local player")] public bool showYouSuffix = true;
     [Tooltip("Show 'Online now' vs friendly 'Xm ago' time for offline")] public bool showLastSeen = true;
+
+    // cached state
+    private int _rank = 0;
 
     /// <summary>
     /// Populate this row's UI fields.
@@ -72,6 +80,9 @@ public class OnlineUserRow : MonoBehaviour
                 lastSeenText.gameObject.SetActive(false);
             }
         }
+
+        // Apply rank if available
+        ApplyRankVisuals();
     }
 
     private void Awake()
@@ -101,6 +112,8 @@ public class OnlineUserRow : MonoBehaviour
             trophyText = FindText(transform, trophyChildName, trophyKeywords);
         if (lastSeenText == null)
             lastSeenText = FindText(transform, lastSeenChildName, lastSeenKeywords);
+        if (rankText == null)
+            rankText = FindText(transform, "rank", new[] { "rank", "#" });
     }
 
     private TMP_Text FindText(Transform root, string exactName, string[] keywords)
@@ -169,5 +182,42 @@ public class OnlineUserRow : MonoBehaviour
             return last.ToString("yyyy-MM-dd");
         }
         catch { return "unknown"; }
+    }
+
+    /// <summary>
+    /// Set the leaderboard rank. Call before or after SetRow; visuals update accordingly.
+    /// </summary>
+    public void SetRank(int rank)
+    {
+        _rank = Mathf.Max(0, rank);
+        ApplyRankVisuals();
+    }
+
+    private void ApplyRankVisuals()
+    {
+        if (rankText != null)
+        {
+            if (_rank > 0)
+            {
+                rankText.gameObject.SetActive(true);
+                rankText.text = "#" + _rank;
+                // Color-code top 3
+                if (_rank == 1) rankText.color = rank1Color;
+                else if (_rank == 2) rankText.color = rank2Color;
+                else if (_rank == 3) rankText.color = rank3Color;
+                else rankText.color = rankDefaultColor;
+            }
+            else
+            {
+                // Hide if rank not provided
+                rankText.gameObject.SetActive(false);
+            }
+        }
+        else if (usernameText != null && _rank > 0)
+        {
+            // Prefix rank if we don't have a dedicated rank text
+            if (!usernameText.text.StartsWith("#"))
+                usernameText.text = "#" + _rank + " " + usernameText.text;
+        }
     }
 }

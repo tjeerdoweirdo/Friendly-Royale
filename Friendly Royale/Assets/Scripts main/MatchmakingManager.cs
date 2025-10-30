@@ -308,6 +308,9 @@ public class MatchmakingManager : MonoBehaviour
         // Initial queue count
         StartCoroutine(RefreshArenaQueueCount());
         
+        // Ensure matchmaking panel is closed by default
+        try { HideMatchmakingPanel(); } catch { }
+
         // Initialize Unity Services for multiplayer
         InitializeUnityServices();
     }
@@ -362,6 +365,8 @@ public class MatchmakingManager : MonoBehaviour
     public void StartMatchmaking()
     {
         if (isSearching) return;
+        // Ensure practice flag is cleared when starting online matchmaking
+        try { PlayerPrefs.SetInt("PracticeModeActive", 0); PlayerPrefs.Save(); } catch { }
         
         // Check if online mode is available
         if (GameModeManager.Instance != null && GameModeManager.Instance.IsOfflineMode())
@@ -524,6 +529,8 @@ public class MatchmakingManager : MonoBehaviour
         
         // Set up single player mode
     SetStatus("Practice...");
+        // Explicitly disable any auto network start and mark practice active
+        try { PlayerPrefs.SetInt("AutoNetworkStart", 0); PlayerPrefs.SetInt("PracticeModeActive", 1); PlayerPrefs.Save(); } catch { }
         
         // Save current deck
         if (deckManager != null && currentDeck != null)
@@ -1382,6 +1389,8 @@ public class MatchmakingManager : MonoBehaviour
         }
         try
         {
+            // Choose protocol suitable for restrictive networks (default wss over 443)
+            string protocol = PlayerPrefs.GetString("RelayProtocol", "wss"); // "wss" or "dtls"
             // Allocate for 1 client (2 total players)
             Allocation alloc = await RelayService.Instance.CreateAllocationAsync(1);
             string joinCode = await RelayService.Instance.GetJoinCodeAsync(alloc.AllocationId);
@@ -1401,11 +1410,26 @@ public class MatchmakingManager : MonoBehaviour
                 currentLobby = refreshed;
             }
 
-            var serverData = new RelayServerData(alloc, "dtls");
-            transport.SetRelayServerData(serverData);
-            NetworkManager.Singleton.StartHost();
-            Debug.Log($"Relay host started. JoinCode: {joinCode}");
-            return true;
+            bool started = false;
+            System.Exception lastEx = null;
+            foreach (var proto in new[] { protocol, protocol == "wss" ? "dtls" : "wss" })
+            {
+                try
+                {
+                    var serverData = new RelayServerData(alloc, proto);
+                    transport.SetRelayServerData(serverData);
+                    NetworkManager.Singleton.StartHost();
+                    Debug.Log($"Relay host started. Protocol={proto} JoinCode: {joinCode}");
+                    started = true;
+                    break;
+                }
+                catch (System.Exception ex)
+                {
+                    lastEx = ex;
+                    Debug.LogWarning($"Relay host start failed with protocol {proto}: {ex.Message}");
+                }
+            }
+            return started;
         }
         catch (System.Exception ex)
         {
@@ -1430,6 +1454,7 @@ public class MatchmakingManager : MonoBehaviour
         }
         try
         {
+            string protocol = PlayerPrefs.GetString("RelayProtocol", "wss");
             string joinCode = relayJoinCode;
             if (currentLobby != null)
             {
@@ -1458,11 +1483,26 @@ public class MatchmakingManager : MonoBehaviour
                 return false;
             }
             JoinAllocation joinAlloc = await RelayService.Instance.JoinAllocationAsync(joinCode);
-            var serverData = new RelayServerData(joinAlloc, "dtls");
-            transport.SetRelayServerData(serverData);
-            NetworkManager.Singleton.StartClient();
-            Debug.Log("Relay client started.");
-            return true;
+            bool started = false;
+            System.Exception lastEx = null;
+            foreach (var proto in new[] { protocol, protocol == "wss" ? "dtls" : "wss" })
+            {
+                try
+                {
+                    var serverData = new RelayServerData(joinAlloc, proto);
+                    transport.SetRelayServerData(serverData);
+                    NetworkManager.Singleton.StartClient();
+                    Debug.Log($"Relay client started. Protocol={proto}");
+                    started = true;
+                    break;
+                }
+                catch (System.Exception ex)
+                {
+                    lastEx = ex;
+                    Debug.LogWarning($"Relay client start failed with protocol {proto}: {ex.Message}");
+                }
+            }
+            return started;
         }
         catch (System.Exception ex)
         {

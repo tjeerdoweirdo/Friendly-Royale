@@ -52,7 +52,7 @@ public class NetworkGameManager : NetworkBehaviour
         NetworkManager.Singleton.OnServerStarted += OnServerStarted;
     }
     
-    private void OnDestroy()
+    private new void OnDestroy()
     {
         if (NetworkManager.Singleton != null)
         {
@@ -232,8 +232,11 @@ public class NetworkGameManager : NetworkBehaviour
         UnityTransport transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
         if (transport != null)
         {
-            transport.ConnectionData.Address = ipAddress;
-            transport.ConnectionData.Port = port;
+            // Allow PlayerPrefs overrides for quick LAN testing
+            string addr = PlayerPrefs.GetString("Net_IP_Client", ipAddress);
+            ushort p = (ushort)PlayerPrefs.GetInt("Net_Port", port);
+            transport.ConnectionData.Address = addr;
+            transport.ConnectionData.Port = p;
         }
     }
     

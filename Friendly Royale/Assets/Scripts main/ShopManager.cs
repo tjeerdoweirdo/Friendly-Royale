@@ -203,6 +203,12 @@ public class ShopManager : MonoBehaviour
             // Close settings if open
             if (settingsPanel != null)
                 settingsPanel.HidePanelImmediate();
+            // Close online users panel if open
+            var online = FindFirstObjectByType<OnlineUsersPanel>();
+            if (online != null) online.HidePanelImmediate();
+            // Close matchmaking panel if open
+            var mm = FindFirstObjectByType<MatchmakingManager>();
+            if (mm != null) mm.HideMatchmakingPanel();
             slideCoroutine = StartCoroutine(SlideShop(shownPosition, true));
         }
     }

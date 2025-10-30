@@ -3,6 +3,8 @@ using UnityEngine.UI;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using Unity.Netcode;
+using Unity.Netcode.Transports.UTP;
 
 public class Settingspanel : MonoBehaviour
 {
@@ -33,6 +35,10 @@ public class Settingspanel : MonoBehaviour
     public Button resetSettingsButton; // Assign in Inspector for Reset
     [Header("Assign the CanvasGroup of the settings panel")]
     public CanvasGroup panelCanvasGroup;
+    [Header("Network/Server Info")]
+    public TMPro.TMP_Text serverInfoText; // Optional: shows current network status
+    [Range(0.1f, 5f)] public float serverInfoUpdateInterval = 0.5f;
+    private float _serverInfoNextUpdate = 0f;
 
     // Optional: Key to toggle panel for demo/testing
     public KeyCode toggleKey = KeyCode.Escape;
@@ -168,6 +174,13 @@ public class Settingspanel : MonoBehaviour
         {
             TogglePanelSlide();
         }
+
+        // Periodically update server info text
+        if (serverInfoText != null && Time.unscaledTime >= _serverInfoNextUpdate)
+        {
+            _serverInfoNextUpdate = Time.unscaledTime + Mathf.Max(0.1f, serverInfoUpdateInterval);
+            UpdateServerInfoText();
+        }
     }
 
     public void TogglePanelSlide()
@@ -181,6 +194,12 @@ public class Settingspanel : MonoBehaviour
             // Close shop if open
             if (shopManager != null)
                 shopManager.CloseShopIfOpen();
+            // Close Online Users panel if open
+            var online = FindFirstObjectByType<OnlineUsersPanel>();
+            if (online != null) online.HidePanelImmediate();
+            // Close Matchmaking panel if open
+            var mm = FindFirstObjectByType<MatchmakingManager>();
+            if (mm != null) mm.HideMatchmakingPanel();
             slideCoroutine = StartCoroutine(SlidePanel(shownPosition, true));
         }
     }
@@ -295,6 +314,33 @@ public class Settingspanel : MonoBehaviour
     public float GetMasterVolume()
     {
         return AudioListener.volume;
+    }
+
+    private void UpdateServerInfoText()
+    {
+        if (serverInfoText == null) return;
+        var nm = NetworkManager.Singleton;
+        bool listening = nm != null && nm.IsListening;
+        bool isServer = nm != null && nm.IsServer;
+        bool isClient = nm != null && nm.IsClient;
+        bool isHost = nm != null && nm.IsHost;
+        int clients = (nm != null && (isServer || isHost)) ? nm.ConnectedClientsIds.Count : 0;
+        string proto = PlayerPrefs.GetString("RelayProtocol", "wss");
+        string ipServer = PlayerPrefs.GetString("Net_IP_Server", "0.0.0.0");
+        string ipClient = PlayerPrefs.GetString("Net_IP_Client", "127.0.0.1");
+        int port = PlayerPrefs.GetInt("Net_Port", 7777);
+        int p1 = PlayerPrefs.GetInt("LocalPlayerIsPlayer1", 1);
+        bool practice = PlayerPrefs.GetInt("PracticeModeActive", 0) == 1;
+        int autoFlag = PlayerPrefs.GetInt("AutoNetworkStart", 0);
+        var utp = nm != null ? nm.GetComponent<UnityTransport>() : null;
+        string trans = utp != null ? $"{utp.ConnectionData.Address}:{utp.ConnectionData.Port}" : "(no transport)";
+
+        serverInfoText.text =
+            $"Net: Listening={listening} Host={isHost} Server={isServer} Client={isClient}\n" +
+            $"Clients: {(isServer || isHost ? clients.ToString() : "-")}\n" +
+            $"Transport: {trans}\n" +
+            $"Prefs: Proto={proto} Srv={ipServer}:{port} Cli={ipClient}:{port}\n" +
+            $"Flags: Practice={practice} AutoStart={autoFlag} Side={(p1==1?"P1":"P2")}";
     }
 
     // --- Reset Settings ---
