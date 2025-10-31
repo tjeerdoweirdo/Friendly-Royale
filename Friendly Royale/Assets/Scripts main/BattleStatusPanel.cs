@@ -50,7 +50,7 @@ public class BattleStatusPanel : MonoBehaviour
             prefsLoaded = true;
         }
 
-        var nm = NetworkManager.Singleton;
+    var nm = NetworkManager.Singleton;
         var utp = nm ? nm.GetComponent<UnityTransport>() : null;
         bool listening = nm && nm.IsListening;
         bool isHost = nm && nm.IsHost;
@@ -65,6 +65,30 @@ public class BattleStatusPanel : MonoBehaviour
         }
         string relayProto = PlayerPrefs.GetString("RelayProtocol", "wss");
         GUILayout.Label($"Relay protocol: {relayProto}");
+
+        // Quick Internet (Relay) connect controls
+        GUILayout.Space(6);
+        GUILayout.Label("Internet (Relay) quick connect:");
+        GUILayout.BeginHorizontal();
+        if (GUILayout.Button("Start Relay Host", GUILayout.Height(24)))
+        {
+            _ = StartRelayHostUI();
+        }
+        GUILayout.Label($"Join Code: {(_lastRelayJoinCode ?? "<none>")}", GUILayout.Width(200));
+        GUILayout.EndHorizontal();
+
+        GUILayout.BeginHorizontal();
+        GUILayout.Label("Join Code:", GUILayout.Width(70));
+        _joinCodeInput = GUILayout.TextField(_joinCodeInput ?? string.Empty, GUILayout.MinWidth(120));
+        if (GUILayout.Button("Join Relay Client", GUILayout.Height(24)))
+        {
+            _ = StartRelayClientUI(_joinCodeInput);
+        }
+        GUILayout.EndHorizontal();
+        if (!string.IsNullOrEmpty(_relayStatus))
+        {
+            GUILayout.Label($"Relay: {_relayStatus}");
+        }
 
         // Opponent info
         string oppName = PlayerPrefs.GetString("OpponentUsername", "<unknown>");
@@ -185,5 +209,46 @@ public class BattleStatusPanel : MonoBehaviour
         GUILayout.Label("Tips: Mirroring affects how opponent placements are seen locally.\nClient-side spawn helps when prefabs lack NetworkObject.");
 
         GUI.DragWindow(new Rect(0,0, 10000, 20));
+    }
+
+    // UI state for relay quick connect
+    private string _joinCodeInput = "";
+    private string _lastRelayJoinCode = null;
+    private string _relayStatus = null;
+
+    private async System.Threading.Tasks.Task StartRelayHostUI()
+    {
+        _relayStatus = "Starting host...";
+        try
+        {
+            var res = await RelayQuickConnect.StartRelayHostAsync();
+            if (res.ok)
+            {
+                _lastRelayJoinCode = res.joinCode;
+                _relayStatus = string.IsNullOrEmpty(res.joinCode) ? "Host started (no relay)" : $"Host started. Code={res.joinCode}";
+            }
+            else
+            {
+                _relayStatus = $"Host failed: {res.error}";
+            }
+        }
+        catch (System.Exception ex)
+        {
+            _relayStatus = $"Host error: {ex.Message}";
+        }
+    }
+
+    private async System.Threading.Tasks.Task StartRelayClientUI(string code)
+    {
+        _relayStatus = "Joining client...";
+        try
+        {
+            var res = await RelayQuickConnect.StartRelayClientAsync(code);
+            _relayStatus = res.ok ? "Client started" : $"Client failed: {res.error}";
+        }
+        catch (System.Exception ex)
+        {
+            _relayStatus = $"Client error: {ex.Message}";
+        }
     }
 }

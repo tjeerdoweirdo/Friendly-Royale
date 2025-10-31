@@ -110,6 +110,10 @@ public class MatchmakingManager : MonoBehaviour
     [Tooltip("Any additional UI elements to show/hide when opponent is found/lost")]
     public GameObject[] opponentUIElements;
 
+    [Header("Lobby Info")]
+    [Tooltip("Text showing the current Unity Lobby ID while searching/readying")]
+    public TMP_Text lobbyIdText;
+
     [Header("Ready-Up UI")]
     [Tooltip("Panel shown during ready-up phase")] public GameObject readyPanel;
     [Tooltip("Button for the local player to press Ready")] public Button readyButton;
@@ -313,6 +317,9 @@ public class MatchmakingManager : MonoBehaviour
 
         // Initialize Unity Services for multiplayer
         InitializeUnityServices();
+
+        // Initialize lobby info UI empty at startup
+        UpdateLobbyInfoUI();
     }
 
     void Update()
@@ -494,6 +501,9 @@ public class MatchmakingManager : MonoBehaviour
         {
             LeaveLobby();
         }
+
+        // Clear lobby info UI when cancelling
+        UpdateLobbyInfoUI();
 
         // Update UI
         if (findMatchButton != null) findMatchButton.gameObject.SetActive(true);
@@ -921,6 +931,7 @@ public class MatchmakingManager : MonoBehaviour
                     if (joinResponse.Exception == null)
                     {
                         currentLobby = joinResponse.Result;
+                        UpdateLobbyInfoUI();
 
                         // Verify lobby arena matches selection
                         string lobbyArena = (currentLobby.Data != null && currentLobby.Data.ContainsKey("arena")) ? currentLobby.Data["arena"].Value : null;
@@ -998,6 +1009,7 @@ public class MatchmakingManager : MonoBehaviour
         {
             currentLobby = createResponse.Result;
             SetStatus("Waiting for opponent...");
+            UpdateLobbyInfoUI();
             // Our newly created lobby represents 1 player queued in this arena
             UpdateArenaQueueCount(1);
             
@@ -1043,6 +1055,7 @@ public class MatchmakingManager : MonoBehaviour
             if (response.Exception == null)
             {
                 currentLobby = response.Result;
+                UpdateLobbyInfoUI();
                 
                 // Check if lobby is full (2 players)
                 if (currentLobby.Players.Count >= 2)
@@ -1175,6 +1188,7 @@ public class MatchmakingManager : MonoBehaviour
         {
             currentLobby = joinResp.Result;
             SetStatus("Switched to existing lobby to pair faster...");
+            UpdateLobbyInfoUI();
         }
         else
         {
@@ -1269,6 +1283,16 @@ public class MatchmakingManager : MonoBehaviour
         {
             string arenaName = selectedArena != null ? selectedArena.displayName : "Arena";
             arenaQueueCountText.text = $"{arenaName} queue: {count}";
+        }
+    }
+
+    // Update lobby metadata shown in the panel (e.g., Lobby ID)
+    private void UpdateLobbyInfoUI()
+    {
+        if (lobbyIdText != null)
+        {
+            string id = (currentLobby != null && !string.IsNullOrEmpty(currentLobby.Id)) ? currentLobby.Id : string.Empty;
+            lobbyIdText.text = string.IsNullOrEmpty(id) ? string.Empty : $"Lobby: {id}";
         }
     }
 
