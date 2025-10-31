@@ -10,6 +10,7 @@ using Unity.Services.Core;
 using Unity.Services.Authentication;
 using Unity.Services.Lobbies;
 using Unity.Services.Lobbies.Models;
+using Unity.Netcode;
 
 /// <summary>
 /// Displays a scrolling list of currently online players (from public lobbies) with their trophy counts.
@@ -46,6 +47,7 @@ public class OnlineUsersPanel : MonoBehaviour
     [Header("Refresh")]
     public float refreshIntervalSeconds = 10f;
     public int queryLobbyCount = 25;
+    [Tooltip("Also include players from the current Netcode session (host/server/clients) when Lobby results are empty or services are unavailable")] public bool includeLocalSession = true;
 
     [Header("Input")]
     [Tooltip("Enable hotkey to toggle the panel")] public bool enableKeyToggle = true;
@@ -183,18 +185,17 @@ public class OnlineUsersPanel : MonoBehaviour
             }
         };
 
+        List<Lobby> results = null;
         var task = LobbyService.Instance.QueryLobbiesAsync(opts);
         yield return new WaitUntil(() => task.IsCompleted);
-
-        List<Lobby> results = null;
-        if (task.Exception != null || task.Result == null)
-        {
-            Debug.LogWarning($"[OnlineUsersPanel] Query failed (phase 1): {task.Exception?.GetBaseException().Message}");
-        }
-        else
+        if (task.Exception == null && task.Result != null)
         {
             results = task.Result.Results;
             Debug.Log($"[OnlineUsersPanel] Query (phase 1) returned {results?.Count ?? 0} lobbies");
+        }
+        else
+        {
+            Debug.Log($"[OnlineUsersPanel] Query failed (phase 1): {task.Exception?.GetBaseException().Message}");
         }
 
         // Fallback: try a broader query with no filters if nothing found
@@ -205,14 +206,14 @@ public class OnlineUsersPanel : MonoBehaviour
                 Count = Mathf.Clamp(queryLobbyCount * 2, 10, 100)
             });
             yield return new WaitUntil(() => fallbackTask.IsCompleted);
-            if (fallbackTask.Exception != null || fallbackTask.Result == null)
-            {
-                Debug.LogWarning($"[OnlineUsersPanel] Query failed (fallback): {fallbackTask.Exception?.GetBaseException().Message}");
-            }
-            else
+            if (fallbackTask.Exception == null && fallbackTask.Result != null)
             {
                 results = fallbackTask.Result.Results;
                 Debug.Log($"[OnlineUsersPanel] Query (fallback) returned {results?.Count ?? 0} lobbies");
+            }
+            else
+            {
+                Debug.Log($"[OnlineUsersPanel] Query failed (fallback): {fallbackTask.Exception?.GetBaseException().Message}");
             }
         }
 
@@ -253,6 +254,12 @@ public class OnlineUsersPanel : MonoBehaviour
                     seen.lastSeenUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 }
             }
+        }
+
+        // If we have no lobby results and local session is available, include current Netcode connections
+        if ((results == null || results.Count == 0) && includeLocalSession)
+        {
+            try { AppendLocalSessionPlayers(uniquePlayers); } catch { }
         }
 
         // Build combined list: online players plus historical (if enabled)
@@ -456,6 +463,53 @@ public class OnlineUsersPanel : MonoBehaviour
 
         // Persist updated history
         TrimAndSaveHistory();
+    }
+
+    private void AppendLocalSessionPlayers(Dictionary<string, (string username, int trophies)> map)
+    {
+        var nm = NetworkManager.Singleton;
+        if (nm == null) return;
+        if (!nm.IsListening && !nm.IsClient) return;
+
+        // Local user entry
+        var me = ResolveCurrentUser();
+        if (!string.IsNullOrEmpty(me.id))
+        {
+            map[$"ngo:self:{nm.LocalClientId}"] = (me.username, me.trophies);
+            // Update history
+            if (!_history.TryGetValue($"ngo:self:{nm.LocalClientId}", out var seen))
+            {
+                seen = new UserSeen { id = $"ngo:self:{nm.LocalClientId}", username = me.username, trophies = me.trophies, lastSeenUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds() };
+                _history[seen.id] = seen;
+            }
+            else
+            {
+                seen.username = me.username;
+                seen.trophies = Mathf.Max(seen.trophies, me.trophies);
+                seen.lastSeenUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            }
+        }
+
+        // Other connections (best-effort naming)
+        foreach (var cid in nm.ConnectedClientsIds)
+        {
+            if (cid == nm.LocalClientId) continue;
+            string key = $"ngo:{cid}";
+            if (!map.ContainsKey(key))
+            {
+                map[key] = ($"Client {cid}", 0);
+            }
+            if (!_history.TryGetValue(key, out var s))
+            {
+                s = new UserSeen { id = key, username = $"Client {cid}", trophies = 0, lastSeenUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds() };
+                _history[key] = s;
+            }
+            else
+            {
+                s.username = $"Client {cid}";
+                s.lastSeenUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            }
+        }
     }
 
     // Try to locate a reasonable content parent automatically
