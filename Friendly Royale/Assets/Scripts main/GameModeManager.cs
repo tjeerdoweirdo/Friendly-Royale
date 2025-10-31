@@ -68,34 +68,20 @@ public class GameModeManager : MonoBehaviour
             yield break;
         }
         
-        // Check if networking components are available and functional
+        // Check if networking components are available (for NGO/transport presence)
         bool networkingAvailable = IsNetworkingAvailable();
-        
         if (!networkingAvailable)
         {
             Debug.Log("GameModeManager: Networking components not available, setting offline mode");
             SetGameMode(false);
             yield break;
         }
-        
-        // Wait a bit to see if network manager initializes properly
-        float timeWaited = 0f;
-        while (timeWaited < networkTimeoutDuration)
-        {
-            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
-            {
-                Debug.Log("GameModeManager: Network manager is active, enabling online mode");
-                SetGameMode(true);
-                yield break;
-            }
-            
-            timeWaited += Time.deltaTime;
-            yield return null;
-        }
-        
-        // Timeout reached, assume offline mode
-        Debug.Log("GameModeManager: Network timeout reached, setting offline mode");
-        SetGameMode(false);
+
+        // We have internet and networking available. Consider the game ONLINE for UI purposes
+        // (e.g., matchmaking panel interactivity) without requiring an active listener yet.
+        Debug.Log("GameModeManager: Internet + networking present, enabling ONLINE mode");
+        SetGameMode(true);
+        yield break;
     }
     
     /// <summary>
