@@ -59,15 +59,32 @@ public class BattleStatusPanel : MonoBehaviour
         bool opponentConnected = false;
         if (nm)
         {
-            ulong myId = nm.LocalClientId;
-            foreach (var cid in nm.ConnectedClientsIds)
+            if (nm.IsHost || nm.IsServer)
             {
-                if (cid != myId) { opponentConnected = true; break; }
+                // Host considers opponent connected if any client (id != ServerClientId) is present
+                foreach (var cid in nm.ConnectedClientsIds)
+                {
+                    if (cid != NetworkManager.ServerClientId) { opponentConnected = true; break; }
+                }
+            }
+            else if (nm.IsClient)
+            {
+                // For a client, being connected to the server implies the opponent (host) is present
+                opponentConnected = nm.IsConnectedClient;
             }
         }
         GUILayout.Space(6);
         GUILayout.Label($"Opponent: {oppName} | Connected: {(opponentConnected?"YES":"NO")}");
-        GUILayout.Label($"Clients: {(nm?nm.ConnectedClientsIds.Count:0)}");
+        // Show raw client list for debugging
+        if (nm)
+        {
+            string ids = string.Join(", ", nm.ConnectedClientsIds);
+            GUILayout.Label($"Clients: {connectedClients} | IDs: [{ids}] | Local={nm.LocalClientId} Server={NetworkManager.ServerClientId}");
+        }
+        else
+        {
+            GUILayout.Label("Clients: 0");
+        }
 
         // Placement/mirroring info and toggles
         var ncps = FindAnyObjectByType<NetworkCardPlacementSystem>();
