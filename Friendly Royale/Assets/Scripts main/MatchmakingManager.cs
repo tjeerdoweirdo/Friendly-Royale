@@ -242,6 +242,23 @@ public class MatchmakingManager : MonoBehaviour
     }
     
     private MatchmakingState currentState = MatchmakingState.Idle;
+    
+    // Helper to publish state to server diagnostics
+    private void ReportState()
+    {
+        try
+        {
+            NetworkStatusTelemetry.ReportMatchmakingState(
+                localPlayerUsername,
+                (NetworkStatusTelemetry.MatchState)currentState,
+                inReadyPhase,
+                localReady,
+                opponentReady,
+                opponentUsername
+            );
+        }
+        catch { }
+    }
 
     void Start()
     {
@@ -421,6 +438,7 @@ public class MatchmakingManager : MonoBehaviour
         {
             matchmakingCoroutine = StartCoroutine(SimulateMatchmaking());
         }
+        ReportState();
         
     SetStatus("Searching...");
         Debug.Log("Started matchmaking for arena: " + selectedArena.arenaID);
@@ -521,6 +539,7 @@ public class MatchmakingManager : MonoBehaviour
 
         SetStatus(statusMessage);
         Debug.Log(statusMessage);
+        ReportState();
     }
 
     public void StartPracticeMode()
@@ -1679,6 +1698,7 @@ public class MatchmakingManager : MonoBehaviour
         
         // Update status with opponent info
     SetStatus($"Found: {opponentUsername} ({opponentTrophies})");
+    ReportState();
 
         // Start the ready-up phase (both players must press Ready)
         StartReadyPhase();
@@ -2365,6 +2385,7 @@ public class MatchmakingManager : MonoBehaviour
         if (opponentReadyText != null) opponentReadyText.text = opponentReady ? "Opp: Ready" : "Opp: Not";
         // Keep button interactable to allow toggling ready on/off during ready phase
         if (readyButton != null) readyButton.interactable = true;
+        ReportState();
     }
 
     public void ShowMatchmakingPanel()

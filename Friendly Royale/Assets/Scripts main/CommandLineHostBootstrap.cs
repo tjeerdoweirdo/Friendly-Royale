@@ -107,6 +107,7 @@ public class CommandLineHostBootstrap : MonoBehaviour
 #if UNITY_RELAY_INSTALLED
         try
         {
+            Debug.Log("[CLI] Ensuring Unity Services and Authentication...");
             await EnsureServicesAsync();
             var utp = NetworkManager.Singleton.GetComponent<UnityTransport>();
             if (utp == null) utp = NetworkManager.Singleton.gameObject.AddComponent<UnityTransport>();
@@ -143,13 +144,47 @@ public class CommandLineHostBootstrap : MonoBehaviour
 #if UNITY_RELAY_INSTALLED
     private static async Task EnsureServicesAsync()
     {
+        // Initialize Services if needed
         if (Unity.Services.Core.UnityServices.State != ServicesInitializationState.Initialized)
         {
-            await Unity.Services.Core.UnityServices.InitializeAsync();
+            try
+            {
+                await Unity.Services.Core.UnityServices.InitializeAsync();
+                Debug.Log("[CLI] Unity Services initialized");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[CLI] Unity Services init race or error: " + ex.Message);
+            }
         }
+
+        // Ensure Authentication. Handle potential InvalidOperation when another system is signing in.
         if (!AuthenticationService.Instance.IsSignedIn)
         {
-            await AuthenticationService.Instance.SignInAnonymouslyAsync();
+            var deadline = DateTime.UtcNow.AddSeconds(12);
+            Exception lastEx = null;
+            while (!AuthenticationService.Instance.IsSignedIn && DateTime.UtcNow < deadline)
+            {
+                try
+                {
+                    await AuthenticationService.Instance.SignInAnonymouslyAsync();
+                    if (AuthenticationService.Instance.IsSignedIn)
+                    {
+                        Debug.Log("[CLI] Signed in anonymously");
+                        break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastEx = ex;
+                    // Likely "Invalid state for this operation" if another system is signing in. Wait and retry.
+                    await Task.Delay(500);
+                }
+            }
+            if (!AuthenticationService.Instance.IsSignedIn && lastEx != null)
+            {
+                Debug.LogWarning("[CLI] Authentication not confirmed after retries: " + lastEx.Message);
+            }
         }
     }
 #endif
