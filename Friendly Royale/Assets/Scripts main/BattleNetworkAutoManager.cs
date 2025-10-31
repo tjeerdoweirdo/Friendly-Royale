@@ -210,6 +210,8 @@ public class BattleNetworkAutoManager : MonoBehaviour
     {
         var nm = NetworkManager.Singleton;
         if (nm == null) return;
+        // Ensure dynamic-spawned unit prefabs are registered on BOTH host and client before starting networking
+        TryRegisterNetworkPrefabs();
         ConfigureTransportForMode(nm, mode);
         switch (mode)
         {
@@ -294,6 +296,8 @@ public class BattleNetworkAutoManager : MonoBehaviour
             }
         }
         catch { }
+        // Register card prefabs before attempting start (covers debug/forced starts)
+        TryRegisterNetworkPrefabs();
         int side = 1;
         try { side = PlayerPrefs.GetInt("LocalPlayerIsPlayer1", 1); } catch { side = 1; }
         if (side == 1)
@@ -337,6 +341,8 @@ public class BattleNetworkAutoManager : MonoBehaviour
             }
         }
         catch { }
+        // Ensure dynamic-spawned unit prefabs are registered before starting host
+        TryRegisterNetworkPrefabs();
         ConfigureTransportForMode(nm, StartMode.Host);
         Debug.Log("[BattleNetworkAutoManager] Starting Host after server-only shutdown...");
         nm.StartHost();
@@ -370,6 +376,33 @@ public class BattleNetworkAutoManager : MonoBehaviour
                 string ipServer = PlayerPrefs.GetString("Net_IP_Server", "0.0.0.0");
                 utp.SetConnectionData(ipServer, port);
             }
+        }
+        catch { }
+    }
+
+    // Registers all known card prefabs (unitPrefab + spawnUnitPrefab) with NGO so
+    // server-authoritative dynamic spawns replicate to clients. This mirrors the
+    // matchmaking flow registration for debug/auto-started sessions.
+    private void TryRegisterNetworkPrefabs()
+    {
+        try
+        {
+            if (NetworkManager.Singleton == null) return;
+            var dm = FindFirstObjectByType<DeckManager>();
+            if (dm == null || dm.allCards == null) return;
+            foreach (var c in dm.allCards)
+            {
+                if (c == null) continue;
+                if (c.unitPrefab != null)
+                {
+                    try { NetworkManager.Singleton.AddNetworkPrefab(c.unitPrefab); } catch { }
+                }
+                if (c.spawnUnitPrefab != null)
+                {
+                    try { NetworkManager.Singleton.AddNetworkPrefab(c.spawnUnitPrefab); } catch { }
+                }
+            }
+            Debug.Log("[BattleNetworkAutoManager] Registered network prefabs for all cards.");
         }
         catch { }
     }
