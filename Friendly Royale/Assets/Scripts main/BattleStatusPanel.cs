@@ -12,6 +12,11 @@ public class BattleStatusPanel : MonoBehaviour
     public bool visible = false;
     public Rect windowRect = new Rect(20, 20, 460, 320);
 
+    // Workaround controls: manual lobby/match id and simulated opponent flag
+    private string manualMatchId = "";
+    private bool simulateOpponentConnected = false;
+    private bool prefsLoaded = false;
+
     void Awake()
     {
         DontDestroyOnLoad(gameObject);
@@ -37,6 +42,14 @@ public class BattleStatusPanel : MonoBehaviour
 
     private void DrawWindow(int id)
     {
+        // Lazy-load persisted settings
+        if (!prefsLoaded)
+        {
+            manualMatchId = PlayerPrefs.GetString("ManualMatchId", "");
+            simulateOpponentConnected = PlayerPrefs.GetInt("SimulateOpponentConnected", 0) == 1;
+            prefsLoaded = true;
+        }
+
         var nm = NetworkManager.Singleton;
         var utp = nm ? nm.GetComponent<UnityTransport>() : null;
         bool listening = nm && nm.IsListening;
@@ -73,8 +86,13 @@ public class BattleStatusPanel : MonoBehaviour
                 opponentConnected = nm.IsConnectedClient;
             }
         }
+        // Workaround: allow simulating opponent connection based on a manual match id
+        if (!opponentConnected && simulateOpponentConnected && !string.IsNullOrEmpty(manualMatchId))
+        {
+            opponentConnected = true;
+        }
         GUILayout.Space(6);
-        GUILayout.Label($"Opponent: {oppName} | Connected: {(opponentConnected?"YES":"NO")}");
+        GUILayout.Label($"Opponent: {oppName} | Connected: {(opponentConnected?"YES":"NO")} {(simulateOpponentConnected?"(simulated)":"")}");
         // Show raw client list for debugging
         if (nm)
         {
@@ -84,6 +102,26 @@ public class BattleStatusPanel : MonoBehaviour
         else
         {
             GUILayout.Label("Clients: 0");
+        }
+
+        GUILayout.Space(6);
+        GUILayout.Label("Workaround: Manual Lobby Match ID");
+        GUILayout.BeginHorizontal();
+        GUILayout.Label("Match ID:", GUILayout.Width(70));
+        manualMatchId = GUILayout.TextField(manualMatchId ?? string.Empty, GUILayout.MinWidth(200));
+        if (GUILayout.Button("Save", GUILayout.Width(60)))
+        {
+            PlayerPrefs.SetString("ManualMatchId", manualMatchId ?? string.Empty);
+            PlayerPrefs.Save();
+        }
+        GUILayout.EndHorizontal();
+
+        bool newSim = GUILayout.Toggle(simulateOpponentConnected, "Simulate Opponent Connected for this ID");
+        if (newSim != simulateOpponentConnected)
+        {
+            simulateOpponentConnected = newSim;
+            PlayerPrefs.SetInt("SimulateOpponentConnected", simulateOpponentConnected ? 1 : 0);
+            PlayerPrefs.Save();
         }
 
         // Placement/mirroring info and toggles
