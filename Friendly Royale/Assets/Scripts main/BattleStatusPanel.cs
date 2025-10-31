@@ -59,9 +59,10 @@ public class BattleStatusPanel : MonoBehaviour
         bool opponentConnected = false;
         if (nm)
         {
+            ulong myId = nm.LocalClientId;
             foreach (var cid in nm.ConnectedClientsIds)
             {
-                if (cid != NetworkManager.ServerClientId) { opponentConnected = true; break; }
+                if (cid != myId) { opponentConnected = true; break; }
             }
         }
         GUILayout.Space(6);
