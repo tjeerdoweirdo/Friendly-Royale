@@ -5,6 +5,7 @@ using System.IO;
 using System.Text;
 using UnityEngine;
 using Unity.Netcode;
+using Unity.Netcode.Transports.UTP;
 
 /// <summary>
 /// Simple in-game terminal that can host/join via RelayQuickConnect, start a local server, and view live logs.
@@ -85,8 +86,9 @@ public class MatchTerminalPanel : MonoBehaviour
         // Command cheatsheet
         GUILayout.BeginVertical(GUILayout.Width(220));
         GUILayout.Label("Commands:");
-        GUILayout.Label("- host               (Relay or direct)");
-        GUILayout.Label("- join CODE          (Relay join)");
+    GUILayout.Label("- host               (Relay or direct)");
+    GUILayout.Label("- join CODE          (Relay join)");
+    GUILayout.Label("- connect IP:PORT    (Direct join to dedicated server)");
     GUILayout.Label("- server             (Start local server in-process)");
     GUILayout.Label("- server external    (Start external server via start_server.bat)");
         GUILayout.Label("- status             (Net state)");
@@ -173,7 +175,7 @@ public class MatchTerminalPanel : MonoBehaviour
             switch (cmd)
             {
                 case "help":
-                    Log("Commands: host | join CODE | server | status | clear | help");
+                    Log("Commands: host | join CODE | connect IP:PORT | server [external] | status | save [name] | clear | help");
                     break;
                 case "clear":
                     lock (_lines) _lines.Clear();
@@ -234,6 +236,34 @@ public class MatchTerminalPanel : MonoBehaviour
                     Log($"[join] {code}...");
                     var res = await RelayQuickConnect.StartRelayClientAsync(code);
                     Log(res.ok ? "[join] client started" : $"[join] failed: {res.error}");
+                }
+                break;
+                case "connect":
+                {
+                    if (parts.Length < 2) { Log("Usage: connect IP:PORT"); break; }
+                    string target = parts[1];
+                    string addr = target;
+                    int port = 7777;
+                    int colon = target.LastIndexOf(':');
+                    if (colon > 0 && colon < target.Length - 1)
+                    {
+                        addr = target.Substring(0, colon);
+                        if (!int.TryParse(target.Substring(colon + 1), out port)) port = 7777;
+                    }
+                    var nm = NetworkManager.Singleton;
+                    if (nm == null) { Log("[connect] NetworkManager missing"); break; }
+                    var utp = nm.GetComponent<UnityTransport>();
+                    if (utp == null) utp = nm.gameObject.AddComponent<UnityTransport>();
+                    try
+                    {
+                        utp.SetConnectionData(addr, (ushort)port);
+                        bool ok = nm.StartClient();
+                        Log(ok ? $"[connect] connecting to {addr}:{port}" : "[connect] failed to start client");
+                    }
+                    catch (System.Exception ex)
+                    {
+                        Log("[connect] error: " + ex.Message);
+                    }
                 }
                 break;
                 case "server":

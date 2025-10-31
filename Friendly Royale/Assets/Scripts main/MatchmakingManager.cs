@@ -20,6 +20,9 @@ using Unity.Netcode.Transports.UTP;
 
 public class MatchmakingManager : MonoBehaviour
 {
+    [Header("Feature Flags")]
+    [Tooltip("If false, disables random/simulated opponents and Unity Lobby-based auto-matchmaking. Players must use Relay join codes or direct server connect.")]
+    public bool allowRandomMatchmaking = false;
     [Header("UI References")]
     [Tooltip("Main matchmaking panel")]
     public GameObject matchmakingPanel;
@@ -135,7 +138,7 @@ public class MatchmakingManager : MonoBehaviour
     public bool localIsPlayer1WhenToggleOn = true;
     
     [Tooltip("If true, player sides are randomly assigned when opponent is found")]
-    public bool randomizePlayerSides = true;
+    public bool randomizePlayerSides = false;
 
     [Header("Styling")] 
     [Tooltip("Color applied to all trophy count texts (gold style).")]
@@ -332,8 +335,8 @@ public class MatchmakingManager : MonoBehaviour
         // Ensure matchmaking panel is closed by default
         try { HideMatchmakingPanel(); } catch { }
 
-        // Initialize Unity Services for multiplayer
-        InitializeUnityServices();
+    // Initialize Unity Services for multiplayer (optional)
+    InitializeUnityServices();
 
         // Initialize lobby info UI empty at startup
         UpdateLobbyInfoUI();
@@ -389,6 +392,11 @@ public class MatchmakingManager : MonoBehaviour
     public void StartMatchmaking()
     {
         if (isSearching) return;
+        if (!allowRandomMatchmaking)
+        {
+            SetStatus("Online matchmaking disabled. Use a Relay code (host/join) or connect to a server.");
+            return;
+        }
         // Ensure practice flag is cleared when starting online matchmaking
         try { PlayerPrefs.SetInt("PracticeModeActive", 0); PlayerPrefs.Save(); } catch { }
         
@@ -436,7 +444,10 @@ public class MatchmakingManager : MonoBehaviour
         }
         else
         {
-            matchmakingCoroutine = StartCoroutine(SimulateMatchmaking());
+            // Do not simulate opponents. Prompt user to use real connections instead.
+            SetStatus("Services unavailable. Use Relay join code or direct server connect.");
+            DoCancelMatchmaking("Matchmaking disabled");
+            return;
         }
         ReportState();
         
@@ -701,32 +712,7 @@ public class MatchmakingManager : MonoBehaviour
         return true;
     }
 
-    IEnumerator SimulateMatchmaking()
-    {
-        // Just keep searching until we decide to "find" a match (simulate timing)
-        while (isSearching && !matchFound)
-        {
-            if ((Time.time - searchStartTimeForProgress) > searchTimeBeforeExpansion)
-            {
-                SetStatus("Widening...");
-            }
-            else
-            {
-                SetStatus("Searching...");
-            }
-            // Random chance to find opponent after minimum half of simulated time
-            if ((Time.time - searchStartTimeForProgress) > simulatedMatchmakingTime * 0.5f && Random.value < 0.15f)
-            {
-                // Found an opponent
-                currentState = MatchmakingState.FoundMatch;
-                GenerateSimulatedOpponent();
-                ShowOpponentFound();
-                break;
-            }
-            yield return new WaitForSeconds(0.5f);
-        }
-        // Pre-match countdown handled by ShowOpponentFound -> PreMatch coroutine
-    }
+    // Simulated matchmaking removed when allowRandomMatchmaking=false
 
     void StartMultiplayerMatch()
     {
@@ -1918,7 +1904,7 @@ public class MatchmakingManager : MonoBehaviour
     
     void UpdatePlayerSideLabels()
     {
-        string randomIndicator = (isSearching && randomizePlayerSides) ? " [Random]" : "";
+    string randomIndicator = (isSearching && randomizePlayerSides) ? " [Random]" : "";
         if (isPracticeStarting)
         {
             if (player1Label != null) player1Label.text = "Player 1 (You)";
