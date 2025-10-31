@@ -52,6 +52,20 @@ public class BattleNetworkAutoManager : MonoBehaviour
             hudGo.AddComponent<NetworkHUDDev>();
             DontDestroyOnLoad(hudGo);
         }
+        // Add BattleStatusPanel for quick in-battle diagnostics (Tab to toggle)
+        if (FindAnyObjectByType<BattleStatusPanel>() == null)
+        {
+            var panelGo = new GameObject("BattleStatusPanel");
+            panelGo.AddComponent<BattleStatusPanel>();
+            DontDestroyOnLoad(panelGo);
+        }
+        // Add EnemyPlacementNotifier to show TMP text for opponent placements
+        if (FindAnyObjectByType<EnemyPlacementNotifier>() == null)
+        {
+            var notifierGo = new GameObject("EnemyPlacementNotifier");
+            notifierGo.AddComponent<EnemyPlacementNotifier>();
+            DontDestroyOnLoad(notifierGo);
+        }
 
         // After Awake so any existing managers created elsewhere can initialize first
         var nm = NetworkManager.Singleton;

@@ -12,12 +12,12 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
     [Tooltip("When enabled, both players use the same 'Player 1' placement rules. There is no special Player 2 zone; placement validity is symmetric.")]
     public bool useUnifiedPlacementForAllPlayers = true;
     [Header("Opponent Placement Mapping (Client-Side Spawns)")]
-    [Tooltip("If enabled, applies a local mapping to the opponent's placement positions when spawning client-side (ClientRpc path). Has no effect on authoritative NetworkObject spawns.")]
-    public bool mapOpponentPositions = false;
+    [Tooltip("If enabled, applies a local mapping to the opponent's placement positions when spawning. Affects ClientRpc spawns and (optionally) adjusts authoritative spawns client-side.")]
+    public bool mapOpponentPositions = true;
 
     public enum OpponentMappingMode { None, MirrorAcrossX0, MirrorAcrossZ0, MirrorAcrossCustomPlane }
     [Tooltip("How to map opponent positions locally on this client when spawning via ClientRpc.")]
-    public OpponentMappingMode opponentMappingMode = OpponentMappingMode.None;
+    public OpponentMappingMode opponentMappingMode = OpponentMappingMode.MirrorAcrossZ0;
 
     [Tooltip("Custom plane point for MirrorAcrossCustomPlane mode (origin point on the plane). If null, world origin is used.")]
     public Transform customPlanePoint;
@@ -81,6 +81,12 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
     [Tooltip("If true, do not treat ground as non-placeable even if its layer is included in nonPlaceableLayerMask (only when no explicit valid areas configured).")]
     public bool allowGroundEvenIfMarkedNonPlaceable = true;
     
+    // Telemetry for status panel: tracks last observed opponent placement on this client
+    public static Vector3? LastEnemyPlacementOriginal { get; private set; }
+    public static Vector3? LastEnemyPlacementMapped { get; private set; }
+    public static string LastEnemyPlacementCardId { get; private set; }
+    public static double LastEnemyPlacementTime { get; private set; }
+
     private static NetworkCardPlacementSystem instance;
     public static NetworkCardPlacementSystem Instance => instance;
     
@@ -794,6 +800,15 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
     // Show visual feedback for the placement (faction local to this client)
         ShowNetworkPlacementFeedback(spawnPos, card, localFaction, placingClientId);
         
+        // Telemetry: record last enemy placement for status overlay
+        if (NetworkManager.Singleton != null && placingClientId != NetworkManager.Singleton.LocalClientId)
+        {
+            LastEnemyPlacementOriginal = position;
+            LastEnemyPlacementMapped = spawnPos;
+            LastEnemyPlacementCardId = cardID;
+            LastEnemyPlacementTime = Time.timeAsDouble;
+        }
+
         Debug.Log($"[NetworkCardPlacementSystem] Spawned card {cardID} for client {placingClientId} at {spawnPos}");
     }
 
@@ -911,11 +926,28 @@ public class NetworkCardPlacementSystem : NetworkBehaviour
         ulong localId = NetworkManager.Singleton.LocalClientId;
         var localFaction = (placerClientId == localId) ? Unit.Faction.Player : Unit.Faction.Enemy;
 
+        // If mapping is enabled and this is an opponent's placement, adjust position locally
+        Vector3 adjustedPos = worldPos;
+        if (placerClientId != localId)
+        {
+            adjustedPos = MapOpponentPositionIfNeeded(worldPos, placerClientId);
+            if (adjustedPos != worldPos)
+            {
+                // Move the object locally to the mapped position
+                go.transform.position = adjustedPos;
+            }
+            // Telemetry: record last enemy placement
+            LastEnemyPlacementOriginal = worldPos;
+            LastEnemyPlacementMapped = adjustedPos;
+            LastEnemyPlacementCardId = cardID;
+            LastEnemyPlacementTime = Time.timeAsDouble;
+        }
+
         // Use CardSpawner to apply configuration (paths, towers, stats)
         var spawner = FindFirstObjectByType<CardSpawner>();
         if (spawner != null)
         {
-            spawner.ConfigureSpawnedObject(go, card, localFaction, level, worldPos, useLeftPath);
+            spawner.ConfigureSpawnedObject(go, card, localFaction, level, adjustedPos, useLeftPath);
         }
     }
 }
