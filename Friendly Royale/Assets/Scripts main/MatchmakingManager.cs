@@ -1292,7 +1292,31 @@ public class MatchmakingManager : MonoBehaviour
         if (lobbyIdText != null)
         {
             string id = (currentLobby != null && !string.IsNullOrEmpty(currentLobby.Id)) ? currentLobby.Id : string.Empty;
+#if UNITY_RELAY_INSTALLED
+            string code = null;
+            try
+            {
+                if (currentLobby != null && currentLobby.Data != null && currentLobby.Data.ContainsKey("joinCode"))
+                {
+                    code = currentLobby.Data["joinCode"].Value;
+                }
+            }
+            catch { }
+            if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(code))
+            {
+                lobbyIdText.text = $"Lobby: {id}  |  Code: {code}";
+            }
+            else if (!string.IsNullOrEmpty(id))
+            {
+                lobbyIdText.text = $"Lobby: {id}";
+            }
+            else
+            {
+                lobbyIdText.text = string.Empty;
+            }
+#else
             lobbyIdText.text = string.IsNullOrEmpty(id) ? string.Empty : $"Lobby: {id}";
+#endif
         }
     }
 
@@ -1480,26 +1504,29 @@ public class MatchmakingManager : MonoBehaviour
         {
             string protocol = PlayerPrefs.GetString("RelayProtocol", "wss");
             string joinCode = relayJoinCode;
-            if (currentLobby != null)
+            // Robustly poll lobby data for joinCode published by host
+            System.DateTime startWait = System.DateTime.UtcNow;
+            System.TimeSpan maxWait = System.TimeSpan.FromSeconds(12);
+            bool statusSet = false;
+            while (string.IsNullOrEmpty(joinCode) && (currentLobby != null) && (System.DateTime.UtcNow - startWait) < maxWait)
             {
-                var refreshed = await LobbyService.Instance.GetLobbyAsync(currentLobby.Id);
-                currentLobby = refreshed;
-                if (currentLobby.Data != null && currentLobby.Data.ContainsKey("joinCode"))
+                try
                 {
-                    joinCode = currentLobby.Data["joinCode"].Value;
-                }
-            }
-            if (string.IsNullOrEmpty(joinCode))
-            {
-                Debug.LogWarning("Join code not yet available; waiting...");
-                await System.Threading.Tasks.Task.Delay(500);
-                if (currentLobby != null)
-                {
-                    var refreshed2 = await LobbyService.Instance.GetLobbyAsync(currentLobby.Id);
-                    currentLobby = refreshed2;
+                    var refreshed = await LobbyService.Instance.GetLobbyAsync(currentLobby.Id);
+                    currentLobby = refreshed;
                     if (currentLobby.Data != null && currentLobby.Data.ContainsKey("joinCode"))
+                    {
                         joinCode = currentLobby.Data["joinCode"].Value;
+                        break;
+                    }
                 }
+                catch { }
+                if (!statusSet)
+                {
+                    try { SetStatus("Waiting for host to publish code..."); } catch { }
+                    statusSet = true;
+                }
+                await System.Threading.Tasks.Task.Delay(600);
             }
             if (string.IsNullOrEmpty(joinCode))
             {
@@ -1548,6 +1575,7 @@ public class MatchmakingManager : MonoBehaviour
             {
                 await LobbyService.Instance.RemovePlayerAsync(currentLobby.Id, AuthenticationService.Instance.PlayerId);
                 currentLobby = null;
+                UpdateLobbyInfoUI();
             }
             catch (System.Exception e)
             {

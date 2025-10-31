@@ -8,6 +8,6 @@ echo - Connection: 0.0.0.0:7777
 echo.
 echo Starting server...
 
-"Friendly Royale.exe" -batchmode -nographics -server
+"Friendly Royale.exe" -batchmode -nographics -server -logFile server.log
 
 pause
